@@ -1,0 +1,16 @@
+# Repo-level tooling config (each service has its own requirements/pyproject).
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["extension"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+ignore = ["B008", "UP040"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["vidnotes_common", "notion_publisher", "app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"

@@ -1,0 +1,45 @@
+{
+  "rabbit_version": "4.1.0",
+  "users": [
+    {
+      "name": "vn",
+      "password_hash": "7TtOz4Do6cEcMEIK2GQ6/wdSyXtedPtcQBgXucrGSVzuET/8",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["administrator"]
+    }
+  ],
+  "vhosts": [{ "name": "/" }],
+  "permissions": [
+    { "user": "vn", "vhost": "/", "configure": ".*", "write": ".*", "read": ".*" }
+  ],
+  "exchanges": [
+    { "name": "vn.jobs", "vhost": "/", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "vn.dlx", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
+  ],
+  "queues": [
+    {
+      "name": "vn.work",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-delivery-limit": 10,
+        "x-dead-letter-exchange": "vn.dlx",
+        "x-dead-letter-strategy": "at-least-once",
+        "x-overflow": "reject-publish"
+      }
+    },
+    {
+      "name": "vn.dlq",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": { "x-queue-type": "quorum", "x-delivery-limit": -1 }
+    }
+  ],
+  "bindings": [
+    { "source": "vn.jobs", "vhost": "/", "destination": "vn.work", "destination_type": "queue", "routing_key": "work", "arguments": {} },
+    { "source": "vn.dlx", "vhost": "/", "destination": "vn.dlq", "destination_type": "queue", "routing_key": "", "arguments": {} }
+  ]
+}

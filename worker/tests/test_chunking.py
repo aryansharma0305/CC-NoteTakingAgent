@@ -1,0 +1,68 @@
+from app.llm.chunking import chunk_segments, estimate_tokens, merge_partials, segment_line
+from app.llm.schema import Section, Synthesis, VisualMoment
+
+
+def segs(n, step=30, words=40):
+    return [{"start": i * step, "end": i * step + step, "text": f"segment {i} " + "word " * words} for i in range(n)]
+
+
+def test_short_transcript_is_one_chunk():
+    s = segs(10)
+    assert chunk_segments(s, 6000) == [s]
+
+
+def test_long_transcript_is_chunked_in_order_with_overlap_and_full_coverage():
+    s = segs(40)  # 20 minutes
+    per = estimate_tokens(segment_line(s[0]))
+    chunks = chunk_segments(s, per * 10)
+    assert len(chunks) > 1
+    # Every chunk within budget, in order, and the union covers every segment.
+    for c in chunks:
+        assert sum(estimate_tokens(segment_line(x)) for x in c) <= per * 10
+    starts = [c[0]["start"] for c in chunks]
+    assert starts == sorted(starts)
+    covered = {x["start"] for c in chunks for x in c}
+    assert covered == {x["start"] for x in s}
+    # Consecutive chunks overlap (~1 minute) but always advance.
+    for a, b in zip(chunks, chunks[1:], strict=False):
+        assert b[0]["start"] <= a[-1]["start"]
+        assert b[0]["start"] > a[0]["start"]
+        assert a[-1]["end"] - b[0]["start"] <= 90
+
+
+def test_chunking_never_loops_on_a_single_huge_segment():
+    s = [{"start": 0, "end": 30, "text": "x" * 100000}, {"start": 30, "end": 60, "text": "y"}]
+    chunks = chunk_segments(s, 100)
+    assert [len(c) for c in chunks] == [1, 1]
+
+
+def vm(t, si=0, cap="c", reason="r"):
+    return VisualMoment(timestamp_sec=t, caption=cap, reason=reason, section_index=si)
+
+
+def test_merge_keeps_section_order_and_collapses_overlap_duplicate():
+    p1 = Synthesis(title="T", tldr="First part. More.", sections=[
+        Section(heading="Intro", start_sec=0, bullets=["a"]),
+        Section(heading="Gradient descent", start_sec=300, bullets=["b"])],
+        visual_moments=[vm(310, 1)])
+    p2 = Synthesis(title="T2", tldr="Second part.", sections=[
+        Section(heading="Gradient Descent!", start_sec=330, bullets=["b", "c"]),
+        Section(heading="Backprop", start_sec=600, bullets=["d"])],
+        visual_moments=[vm(615, 1), vm(312, 0)])
+    m = merge_partials([p1, p2], duration_sec=1000, max_frames=8)
+    assert [s.heading for s in m.sections] == ["Intro", "Gradient descent", "Backprop"]
+    assert m.sections[1].bullets == ["b", "c"]
+    # 312 deduped against 310 (within 10 s); 615's section index remapped from p2#1 -> merged #2
+    assert [(v.timestamp_sec, v.section_index) for v in m.visual_moments] == [(310, 1), (615, 2)]
+    assert m.title == "T" and m.tldr == "First part. Second part."
+
+
+def test_merge_clamps_drops_uncaptioned_and_caps_frames():
+    p = Synthesis(sections=[Section(heading="s", start_sec=0)], visual_moments=[
+        vm(-5), vm(5000), vm(100, cap=" "), vm(200, reason="")] + [vm(300 + 20 * i) for i in range(20)])
+    m = merge_partials([p], duration_sec=1000, max_frames=8)
+    ts = [v.timestamp_sec for v in m.visual_moments]
+    assert len(ts) == 8
+    assert ts == sorted(ts)
+    assert ts[0] == 0 and ts[-1] <= 999
+    assert 100 not in ts and 200 not in ts

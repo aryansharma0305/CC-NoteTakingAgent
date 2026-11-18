@@ -1,0 +1,17 @@
+# Two-person split (see docs/architecture.md). Replace the handles with your GitHub users.
+# Day-to-day folders are owned by one person; shared contracts and root files
+# need the OTHER person's review.
+
+/extension/          @person-a
+/gateway/            @person-a
+/notion_publisher/   @person-a
+
+/worker/             @person-b
+/infra/              @person-b
+/ops/                @person-b
+/docker-compose.yml  @person-a @person-b
+
+/shared/             @person-a @person-b
+/README.md           @person-a @person-b
+/.env.example        @person-a @person-b
+/docs/               @person-a @person-b

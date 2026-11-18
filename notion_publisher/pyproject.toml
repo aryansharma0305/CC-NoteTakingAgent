@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notion-publisher"
+version = "1.0.0"
+description = "Builds and publishes the Notion study-notes page (owned by Person A, imported by the worker)"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27", "vidnotes-common"]
+
+[tool.setuptools]
+packages = ["notion_publisher"]
+
+[tool.setuptools.package-dir]
+notion_publisher = "."

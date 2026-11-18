@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Video Notes — Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Video Notes settings</h1>
+
+      <section>
+        <h2>Notes server</h2>
+        <label for="gateway">Server address</label>
+        <input id="gateway" type="url" placeholder="http://localhost:8000" spellcheck="false" />
+        <div class="row">
+          <button id="save-gateway" class="primary">Save</button>
+          <button id="test" class="secondary">Test connection</button>
+        </div>
+        <ul id="health" class="health" hidden></ul>
+      </section>
+
+      <section>
+        <h2>Notion</h2>
+        <p id="auth-status" class="muted">Not connected.</p>
+        <div class="row">
+          <button id="connect" class="primary">Connect Notion</button>
+          <button id="disconnect" class="secondary" hidden>Disconnect</button>
+        </div>
+        <details>
+          <summary>Use an internal integration token instead</summary>
+          <p class="muted small">
+            Create an internal integration at notion.so/my-integrations, share a page with it
+            (page menu → Connections), then paste its secret here.
+          </p>
+          <input id="token" type="password" placeholder="ntn_… or secret_…" autocomplete="off" spellcheck="false" />
+          <div class="row"><button id="save-token" class="secondary">Save token</button></div>
+        </details>
+      </section>
+
+      <section>
+        <h2>Destination page</h2>
+        <p class="muted small">
+          Leave blank to use the "Video Notes" page added during Notion sign-in (or, failing that,
+          the most recently edited page shared with the integration). Paste a Notion page URL or id
+          to override.
+        </p>
+        <input id="parent" type="text" placeholder="https://www.notion.so/My-Notes-1a2b3c…" spellcheck="false" />
+        <div class="row"><button id="save-parent" class="primary">Save</button></div>
+      </section>
+
+      <p id="msg" class="msg" role="status" hidden></p>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

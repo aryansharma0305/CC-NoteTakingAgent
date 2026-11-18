@@ -1,0 +1,74 @@
+/* "Take Notes" button inside the YouTube player toolbar. */
+.ytp-button.vn-btn {
+  width: auto !important;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 0 8px !important;
+  color: #fff;
+  font: 600 13px/1 "Roboto", "Arial", sans-serif;
+  vertical-align: top;
+  opacity: 0.95;
+  cursor: pointer;
+}
+.ytp-button.vn-btn span {
+  white-space: nowrap;
+}
+.ytp-button.vn-btn:hover {
+  opacity: 1;
+  color: #c5d3ff;
+}
+.ytp-button.vn-btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+/* Fallback when the player toolbar can't be found. */
+.vn-float-btn {
+  position: fixed;
+  right: 20px;
+  bottom: 24px;
+  z-index: 2147483000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: #3b5bdb;
+  color: #fff;
+  font: 600 14px/1 "Roboto", "Arial", sans-serif;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+.vn-float-btn:hover {
+  background: #2f4ac0;
+}
+
+.vn-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translate(-50%, 20px);
+  z-index: 2147483001;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: #1f2430;
+  color: #fff;
+  font: 500 14px/1.4 "Roboto", "Arial", sans-serif;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.vn-toast--show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.vn-toast--info {
+  border-left: 4px solid #4c6ef5;
+}
+.vn-toast--error {
+  border-left: 4px solid #fa5252;
+}

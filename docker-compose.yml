@@ -1,0 +1,119 @@
+# Video Note-Taking Agent -- whole backend in one file.
+#   docker compose up --build -d                 # gateway + 2 workers + data layer
+#   docker compose up -d --scale worker=4        # scale the worker pool
+#   docker kill -s KILL <worker container>       # crash a worker mid-job
+name: vidnotes
+
+x-app-env: &app-env
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgresql+asyncpg://vn:vn@postgres:5432/vn
+    RABBITMQ_URL: amqp://vn:vn@rabbitmq:5672/
+    REDIS_URL: redis://redis:6379/0
+    S3_ENDPOINT: http://s3:8333
+    # Overridable from the shell for demos (ops/*.sh); otherwise read from .env.
+    RETRY_DELAYS: ${RETRY_DELAYS:-10,30,90,180}
+    MAX_ATTEMPTS: ${MAX_ATTEMPTS:-5}
+    FAULT_INJECT_429: ${FAULT_INJECT_429:-}
+    FAULT_INJECT_FRAME_FAIL: ${FAULT_INJECT_FRAME_FAIL:-}
+
+services:
+  rabbitmq:
+    image: rabbitmq:4.1-management
+    hostname: rabbitmq # quorum-queue data is tied to the node name
+    volumes:
+      - ./infra/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./infra/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "15672:15672" # management UI (vn / vn)
+      - "5672:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vn
+      POSTGRES_PASSWORD: vn
+      POSTGRES_DB: vn
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vn -d vn"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  s3:
+    # S3-compatible object store for frame JPEGs (SeaweedFS; MinIO no longer
+    # publishes community images). Credentials: infra/s3/s3.json.
+    image: chrislusf/seaweedfs:3.80
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0
+    volumes:
+      - ./infra/s3/s3.json:/etc/seaweedfs/s3.json:ro
+      - s3-data:/data
+    ports:
+      - "8333:8333"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status && nc -z 127.0.0.1 8333"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    <<: *app-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      s3: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=4).status==200 else 1)"]
+      interval: 5s
+      timeout: 6s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    <<: *app-env
+    # No container_name and no ports: the service is stateless and scalable.
+    deploy:
+      replicas: 2
+    depends_on:
+      gateway: { condition: service_healthy } # gateway applies DB migrations first
+    restart: unless-stopped
+    stop_grace_period: 10s
+    init: true
+
+volumes:
+  rabbitmq-data:
+  postgres-data:
+  s3-data:
