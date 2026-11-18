@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # --- pipeline ---
     max_duration_sec: int = 1200
     max_frames: int = 8
+    # Pad with evenly spaced frames when the LLM flags fewer than this (0 = off).
+    min_frames: int = 0
+    # Approximate length of the whole set of notes, split across transcript chunks.
+    notes_words: int = 600
+    # Transcript snippets are grouped into windows of this many seconds (timestamp granularity).
+    segment_window_sec: float = 30.0
     chunk_tokens: int = 6000
     frame_parallelism: int = 3
     frame_timeout_sec: float = 30.0

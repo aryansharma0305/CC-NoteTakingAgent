@@ -77,7 +77,7 @@ async def run(ctx: WorkerContext, job, msg) -> StageResult:
         else:
             raise FatalError(ErrorCode.NO_TRANSCRIPT)
 
-    segments = yt.merge_segments(snippets)
+    segments = yt.merge_segments(snippets, window_sec=ctx.settings.segment_window_sec)
     if not segments:
         raise FatalError(ErrorCode.NO_TRANSCRIPT)
     if duration is None:

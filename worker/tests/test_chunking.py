@@ -66,3 +66,28 @@ def test_merge_clamps_drops_uncaptioned_and_caps_frames():
     assert ts == sorted(ts)
     assert ts[0] == 0 and ts[-1] <= 999
     assert 100 not in ts and 200 not in ts
+
+
+def test_merge_pads_to_min_frames_evenly_and_keeps_llm_frames():
+    p = Synthesis(sections=[Section(heading="Blood", start_sec=0), Section(heading="Weather", start_sec=30)],
+                  visual_moments=[vm(2, 1)])
+    m = merge_partials([p], duration_sec=60, max_frames=5, min_frames=5)
+    ts = [v.timestamp_sec for v in m.visual_moments]
+    assert len(ts) == 5 and ts == sorted(ts) and 2 in ts
+    assert all(b - a >= 6 for a, b in zip(ts, ts[1:], strict=False))
+    assert all(0 <= t <= 59 for t in ts)
+    late = [v for v in m.visual_moments if v.timestamp_sec >= 30 and v.timestamp_sec != 2]
+    assert late and all(v.section_index == 1 and "Weather" in v.caption for v in late)
+
+
+def test_merge_without_min_frames_does_not_pad():
+    p = Synthesis(sections=[Section(heading="s", start_sec=0)], visual_moments=[vm(100)])
+    m = merge_partials([p], duration_sec=1000, max_frames=5)
+    assert [v.timestamp_sec for v in m.visual_moments] == [100]
+
+
+def test_system_prompt_targets():
+    from app.llm.prompts import system_prompt
+    p = system_prompt(5, 1000)
+    assert "exactly 5" in p and "about 1000 words" in p and "{" not in p.split("Return one JSON")[0]
+    assert "0 (an empty list)" in system_prompt(0, 50) and "about 150 words" in system_prompt(0, 50)

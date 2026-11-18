@@ -109,3 +109,22 @@ def test_lookup_times_out_to_none():
         assert asyncio.run(youtube_meta.lookup("x", s, None)) is None
     finally:
         youtube_meta._via_watch_page = orig
+
+
+def test_debug_page_is_served_without_token_or_dependencies(client):
+    r = client.get("/debug")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "/admin/debug/overview" in r.text
+
+
+def test_debug_api_requires_token(client):
+    assert client.get("/admin/debug/overview").status_code == 401
+    assert client.get("/admin/debug/frame", params={"key": "jobs/x/frame_1.jpg"}).status_code == 401
+
+
+def test_debug_frame_rejects_keys_outside_jobs_prefix(client):
+    h = {"X-Admin-Token": client.app.state.vn.settings.admin_token}
+    for key in ("secrets/x.jpg", "jobs/../etc/passwd"):
+        r = client.get("/admin/debug/frame", params={"key": key}, headers=h)
+        assert r.status_code == 400

@@ -64,9 +64,40 @@ def _first_sentence(text: str) -> str:
     return m.group(1) if m else text.strip()
 
 
-def merge_partials(partials: list[Synthesis], *, duration_sec: int | None, max_frames: int) -> Synthesis:
+def pad_moments(
+    moments: list[VisualMoment], sections: list[Section], *, duration_sec: int, target: int
+) -> list[VisualMoment]:
+    """Add evenly spaced frames until there are `target`, keeping clear of existing ones.
+    Captions are honest: they name the section being discussed, not invented visuals."""
+    out = list(moments)
+    if duration_sec <= 0 or len(out) >= target:
+        return out
+    min_gap = min(DEDUPE_WINDOW_SEC, duration_sec / (2 * target))
+    slots = [int(duration_sec * (i + 0.5) / (target * 4)) for i in range(target * 4)]
+    while len(out) < target:
+        def gap(t: int) -> float:
+            return min((abs(t - m.timestamp_sec) for m in out), default=float("inf"))
+
+        best = max(slots, key=gap, default=None)
+        if best is None or gap(best) < min_gap:
+            break
+        si = max((i for i, s in enumerate(sections) if s.start_sec <= best), default=0 if sections else None)
+        topic = sections[si].heading if si is not None else "the video"
+        out.append(VisualMoment(
+            timestamp_sec=best,
+            caption=f"Scene at {fmt_ts(best)} while the video covers: {topic}.",
+            reason="Added to give an even visual overview of the video.",
+            section_index=si,
+        ))
+    return sorted(out, key=lambda m: m.timestamp_sec)
+
+
+def merge_partials(
+    partials: list[Synthesis], *, duration_sec: int | None, max_frames: int, min_frames: int = 0
+) -> Synthesis:
     """Concatenate sections in chunk order, collapse overlap duplicates, dedupe and
-    clamp visual moments, keep at most max_frames (in time order)."""
+    clamp visual moments, keep at most max_frames (in time order), and pad up to
+    min_frames with evenly spaced frames."""
     sections: list[Section] = []
     moments: list[VisualMoment] = []
     for p in partials:
@@ -105,6 +136,8 @@ def merge_partials(partials: list[Synthesis], *, duration_sec: int | None, max_f
         # Keep max_frames spread across the video, preserving order.
         step = len(cleaned) / max_frames
         cleaned = [cleaned[int(i * step)] for i in range(max_frames)]
+    if min_frames and duration_sec:
+        cleaned = pad_moments(cleaned, sections, duration_sec=duration_sec, target=min_frames)
 
     if len(partials) == 1:
         title, tldr = partials[0].title, partials[0].tldr

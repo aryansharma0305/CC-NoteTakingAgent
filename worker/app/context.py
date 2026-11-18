@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from vidnotes_common.config import Settings
 from vidnotes_common.crypto import TokenCipher
 
+from .heartbeat import Heartbeat
 from .llm import LLMClient
 from .ratelimit import Limiter
 from .storage import Storage
@@ -28,3 +29,4 @@ class WorkerContext:
     llm: LLMClient
     cipher: TokenCipher
     worker_id: str = socket.gethostname()
+    heartbeat: Heartbeat | None = None  # live status for the /debug panel

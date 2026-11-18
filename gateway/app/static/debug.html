@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Video Notes Debug</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f0f2f5; --border: #dfe3e8; --text: #1b1f24;
+    --muted: #5f6b7a; --accent: #3b6fd8; --ok: #1f8a4c; --warn: #b7791f; --bad: #c53030; --busy: #6b46c1;
+    --code-bg: #f3f4f6; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1216; --panel: #161b22; --panel-2: #1c232c; --border: #2a323d; --text: #e6e9ee;
+      --muted: #8b96a5; --accent: #6c9cff; --ok: #3fb97a; --warn: #e0a84a; --bad: #f06a6a; --busy: #a78bfa;
+      --code-bg: #0b0e12;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1216; --panel: #161b22; --panel-2: #1c232c; --border: #2a323d; --text: #e6e9ee;
+    --muted: #8b96a5; --accent: #6c9cff; --ok: #3fb97a; --warn: #e0a84a; --bad: #f06a6a; --busy: #a78bfa;
+    --code-bg: #0b0e12;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+           padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  header .spacer { flex: 1; }
+  input, select, button { font: inherit; color: var(--text); background: var(--panel-2);
+                          border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; }
+  button { cursor: pointer; } button:hover { border-color: var(--accent); }
+  main { padding: 14px 16px 40px; display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  .row { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .split { display: grid; gap: 14px; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); align-items: start; }
+  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px;
+          font-size: 12px; border: 1px solid var(--border); background: var(--panel-2); white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .ok .dot { background: var(--ok); } .bad .dot { background: var(--bad); } .warn .dot { background: var(--warn); }
+  .busy .dot { background: var(--busy); }
+  .muted { color: var(--muted); } .small { font-size: 12px; } .mono { font-family: var(--mono); font-size: 12px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; }
+  .kv div:nth-child(odd) { color: var(--muted); }
+  .workers { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .worker { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel-2); }
+  .worker.isbusy { border-color: var(--busy); }
+  .jobs { display: flex; flex-direction: column; gap: 6px; max-height: 70vh; overflow: auto; }
+  .job { text-align: left; display: block; width: 100%; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); }
+  .job.sel { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+  .job .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { height: 4px; background: var(--border); border-radius: 4px; overflow: hidden; margin-top: 6px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  pre { margin: 0; padding: 10px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+        overflow: auto; max-height: 60vh; white-space: pre-wrap; word-break: break-word; font: 12px/1.5 var(--mono); }
+  details { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 8px 0; background: var(--panel-2); }
+  details > summary { cursor: pointer; font-weight: 600; }
+  details[open] > summary { margin-bottom: 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border-bottom: 1px solid var(--border); padding: 5px 8px; vertical-align: top; text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.ts { font-family: var(--mono); font-size: 12px; white-space: nowrap; color: var(--accent); }
+  .frames { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .frame { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel-2); }
+  .frame img { width: 100%; display: block; aspect-ratio: 16/9; object-fit: cover; background: var(--code-bg); }
+  .frame .c { padding: 8px 10px; }
+  .err { color: var(--bad); }
+  .section h4 { margin: 12px 0 4px; } .section ul { margin: 0; padding-left: 20px; }
+  .empty { color: var(--muted); padding: 20px; text-align: center; }
+  .warnbox { border: 1px solid var(--warn); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Video Notes · Debug</h1>
+  <span id="health"></span>
+  <span class="spacer"></span>
+  <input id="token" type="password" placeholder="Admin token (ADMIN_TOKEN)" size="22" autocomplete="off" />
+  <button id="saveToken">Save</button>
+  <label class="small"><input type="checkbox" id="auto" checked /> auto-refresh</label>
+  <button id="refresh">Refresh</button>
+  <button id="theme" title="Toggle theme">◐</button>
+  <span id="updated" class="small muted"></span>
+</header>
+
+<main>
+  <div id="authMsg" class="card" hidden></div>
+
+  <section class="card">
+    <h2>Workers</h2>
+    <div id="workers" class="workers"></div>
+  </section>
+
+  <div class="row">
+    <section class="card"><h2>Queues</h2><div id="queues"></div></section>
+    <section class="card"><h2>Jobs by status</h2><div id="counts"></div></section>
+    <section class="card"><h2>Settings</h2><div id="settings" class="small"></div></section>
+  </div>
+
+  <div class="split">
+    <section class="card">
+      <h2>Recent jobs</h2>
+      <div id="jobs" class="jobs"></div>
+    </section>
+    <section class="card" id="detail"><div class="empty">Select a job to inspect it.</div></section>
+  </div>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const TERMINAL = new Set(["COMPLETED", "COMPLETED_WITH_WARNINGS", "FAILED", "DEAD_LETTERED"]);
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } },
+  };
+  let token = store.get("vn-admin-token") || "";
+  let selected = (location.hash.match(/job=([\w-]+)/) || [])[1] || null;
+  let tab = store.get("vn-debug-tab") || "overview";
+  let detailCache = null;           // {job, artifacts}
+  const objectUrls = [];
+
+  const theme = store.get("vn-theme");
+  if (theme) document.documentElement.dataset.theme = theme;
+  $("theme").onclick = () => {
+    const cur = document.documentElement.dataset.theme
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    store.set("vn-theme", next);
+  };
+
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const fmtTs = (s) => {
+    s = Math.max(0, Math.floor(Number(s) || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+    return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0");
+  };
+  const ago = (epochSec) => {
+    if (!epochSec) return "—";
+    const d = Math.max(0, Date.now() / 1000 - epochSec);
+    if (d < 60) return Math.round(d) + "s ago";
+    if (d < 3600) return Math.round(d / 60) + "m ago";
+    return Math.round(d / 3600) + "h ago";
+  };
+  const dur = (sec) => sec < 60 ? Math.round(sec) + "s" : Math.floor(sec / 60) + "m " + Math.round(sec % 60) + "s";
+  const isoAgo = (iso) => iso ? ago(Date.parse(iso) / 1000) : "—";
+  const statusClass = (s) => s === "COMPLETED" ? "ok" : (s === "FAILED" || s === "DEAD_LETTERED") ? "bad"
+    : s === "COMPLETED_WITH_WARNINGS" ? "warn" : s === "QUEUED" ? "" : "busy";
+  const pill = (text, cls = "") => `<span class="pill ${cls}"><span class="dot"></span>${esc(text)}</span>`;
+  const json = (o) => `<pre>${esc(JSON.stringify(o, null, 2))}</pre>`;
+
+  async function api(path, opts = {}) {
+    const r = await fetch(path, { ...opts, headers: { "X-Admin-Token": token, ...(opts.headers || {}) } });
+    if (r.status === 401) throw Object.assign(new Error("Unauthorized"), { auth: true });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+    return r;
+  }
+  const apiJson = async (p) => { const r = await api(p); return r ? r.json() : null; };
+
+  function showAuth(msg) {
+    const el = $("authMsg");
+    el.hidden = !msg;
+    el.innerHTML = msg ? `<span class="err">${esc(msg)}</span>` : "";
+  }
+
+  $("token").value = token;
+  $("saveToken").onclick = () => { token = $("token").value.trim(); store.set("vn-admin-token", token); refreshAll(); };
+  $("token").addEventListener("keydown", (e) => { if (e.key === "Enter") $("saveToken").click(); });
+  $("refresh").onclick = () => refreshAll(true);
+
+  // ------------------------------------------------------------- overview
+  function renderOverview(o) {
+    $("health").innerHTML = Object.entries(o.health).map(([k, v]) =>
+      `<span title="${esc(v)}">${pill(k, v === "ok" ? "ok" : "bad")}</span>`).join(" ");
+
+    const ws = o.workers || [];
+    $("workers").innerHTML = ws.length ? ws.map((w) => {
+      const busy = w.state === "busy";
+      const stale = o.now - (w.last_seen || 0) > 15;
+      return `<div class="worker ${busy ? "isbusy" : ""}">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+          <strong class="mono">${esc(w.worker_id)}</strong>
+          ${pill(stale ? "stale" : busy ? "busy" : "idle", stale ? "warn" : busy ? "busy" : "ok")}
+        </div>
+        <div class="kv small" style="margin-top:8px">
+          <div>LLM</div><div class="mono">${esc(w.llm)}</div>
+          ${busy ? `<div>Job</div><div><a href="#job=${esc(w.job_id)}" class="mono">${esc(String(w.job_id).slice(0, 8))}</a></div>
+                    <div>Stage</div><div>${esc(w.stage)} · ${dur(o.now - w.stage_started_at)}</div>`
+                 : `<div>Last job</div><div class="mono">${w.last_job_id ? `<a href="#job=${esc(w.last_job_id)}">${esc(String(w.last_job_id).slice(0, 8))}</a>` : "—"}</div>`}
+          <div>Handled</div><div>${w.handled} stages${w.failed ? ` · <span class="err">${w.failed} failed</span>` : ""}</div>
+          <div>Up</div><div>${dur(o.now - w.started_at)} · seen ${ago(w.last_seen)}</div>
+        </div>
+        ${w.last_error ? `<details><summary class="err small">Last error (${ago(w.last_error.at)})</summary>
+          <pre>${esc(w.last_error.stage + " · " + w.last_error.message)}</pre></details>` : ""}
+      </div>`;
+    }).join("") : `<div class="muted">No worker heartbeats. Workers built before the debug panel don't report status; rebuild them (docker compose up --build -d worker).</div>`;
+
+    const q = o.queues || {};
+    $("queues").innerHTML = q.error ? `<span class="err">${esc(q.error)}</span>` :
+      `<table>${Object.entries(q).map(([k, v]) =>
+        `<tr><td class="mono">${esc(k)}</td><td style="text-align:right">${v < 0 ? "—" : v}</td></tr>`).join("")}</table>`;
+    $("counts").innerHTML = Object.keys(o.status_counts || {}).length
+      ? Object.entries(o.status_counts).map(([k, v]) => pill(`${k}: ${v}`, statusClass(k))).join(" ")
+      : `<span class="muted">No jobs yet.</span>`;
+    $("settings").innerHTML = `<div class="kv">${Object.entries(o.settings).map(([k, v]) =>
+      `<div class="mono">${esc(k)}</div><div class="mono">${esc(Array.isArray(v) ? v.join(", ") : v === "" ? "—" : v)}</div>`).join("")}</div>`;
+
+    const jobs = o.jobs || [];
+    $("jobs").innerHTML = jobs.length ? jobs.map((j) => `
+      <button class="job ${j.job_id === selected ? "sel" : ""}" data-id="${esc(j.job_id)}">
+        <div class="t">${esc(j.video_title || j.video_id || j.job_id)}</div>
+        <div class="small muted" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+          ${pill(j.status, statusClass(j.status))}
+          <span class="mono">${esc(j.job_id.slice(0, 8))}</span>
+          <span>${j.duration_sec ? fmtTs(j.duration_sec) : ""}</span>
+          <span>${isoAgo(j.created_at)}</span>
+        </div>
+        <div class="bar"><i style="width:${Math.min(100, j.progress || 0)}%"></i></div>
+      </button>`).join("") : `<div class="empty">No jobs yet.</div>`;
+    $("jobs").querySelectorAll(".job").forEach((b) => b.onclick = () => select(b.dataset.id));
+  }
+
+  // ---------------------------------------------------------------- detail
+  function select(id) {
+    selected = id;
+    detailCache = null;
+    history.replaceState(null, "", "#job=" + id);
+    document.querySelectorAll(".job").forEach((b) => b.classList.toggle("sel", b.dataset.id === id));
+    loadDetail(true);
+  }
+  window.addEventListener("hashchange", () => {
+    const id = (location.hash.match(/job=([\w-]+)/) || [])[1];
+    if (id && id !== selected) select(id);
+  });
+
+  async function loadDetail(force) {
+    if (!selected || !token) return;
+    const prev = detailCache;
+    const job = await apiJson(`/admin/jobs/${selected}`);
+    if (!job) { $("detail").innerHTML = `<div class="empty">Job not found.</div>`; return; }
+    // Artifacts only change when a stage completes; refetch when status changes.
+    let artifacts = prev && prev.job.status === job.status && !force ? prev.artifacts : null;
+    if (!artifacts) {
+      const [transcript, synthesis, frames] = await Promise.all(
+        ["transcript", "synthesis", "frames"].map((s) => apiJson(`/admin/jobs/${selected}/artifacts/${s}`)));
+      artifacts = { transcript: transcript?.data, synthesis: synthesis?.data, frames: frames?.data };
+    }
+    const changed = !prev || force || prev.job.status !== job.status || prev.job.progress !== job.progress
+      || prev.job.events.length !== job.events.length;
+    detailCache = { job, artifacts };
+    // Re-render heavy tabs only when something changed, so reading/scrolling isn't disrupted.
+    if (changed || tab === "overview") renderDetail();
+  }
+
+  const TABS = [["overview", "Overview"], ["transcript", "Transcript"], ["llm", "LLM context"],
+                ["notes", "Notes"], ["frames", "Frames"], ["raw", "Raw JSON"]];
+
+  function renderDetail() {
+    const { job, artifacts } = detailCache;
+    const head = `
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:start">
+        <div style="min-width:0">
+          <div style="font-weight:600;font-size:15px">${esc(job.video_title || job.video_id)}</div>
+          <div class="small muted mono">${esc(job.job_id)}</div>
+        </div>
+        <div>${pill(job.status, statusClass(job.status))} <span class="small muted">${job.progress}%</span></div>
+      </div>
+      <div class="bar" style="margin:8px 0 12px"><i style="width:${job.progress}%"></i></div>
+      <div class="tabs">${TABS.map(([k, l]) => `<button data-tab="${k}" class="${k === tab ? "on" : ""}">${l}</button>`).join("")}</div>`;
+    const body = { overview: tabOverview, transcript: tabTranscript, llm: tabLlm, notes: tabNotes,
+                   frames: tabFrames, raw: tabRaw }[tab] || tabOverview;
+    const scroll = window.scrollY;
+    $("detail").innerHTML = head + `<div id="tabBody">${body(job, artifacts)}</div>`;
+    window.scrollTo(0, scroll);
+    $("detail").querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => {
+      tab = b.dataset.tab; store.set("vn-debug-tab", tab); renderDetail();
+    });
+    if (tab === "frames") loadFrameImages();
+  }
+
+  function tabOverview(job) {
+    const ev = job.events || [];
+    return `
+      ${job.error ? `<div class="warnbox"><strong class="err">Error:</strong> <span class="mono">${esc(job.error.code || "")}</span> ${esc(job.error.message || "")}</div>` : ""}
+      ${job.retry_reason ? `<div class="warnbox">Retrying: ${esc(job.retry_reason)} ${job.waiting_until ? "· until " + esc(job.waiting_until) : ""}</div>` : ""}
+      <div class="kv" style="margin-bottom:12px">
+        <div>Video</div><div><a href="https://www.youtube.com/watch?v=${esc(job.video_id)}" target="_blank" rel="noopener">${esc(job.video_id)}</a> · ${job.duration_sec ? fmtTs(job.duration_sec) : "?"}</div>
+        <div>Attempt</div><div>${job.attempt} / ${job.max_attempts}</div>
+        <div>Worker</div><div class="mono">${esc(job.worker_id || "—")}</div>
+        <div>Publish</div><div>${esc(job.publish_state || "—")} · cursor ${job.publish_cursor ?? 0}</div>
+        <div>Notion</div><div>${job.result?.notion_page_url ? `<a href="${esc(job.result.notion_page_url)}" target="_blank" rel="noopener">open page</a>` : "—"}</div>
+        <div>Created</div><div>${esc(job.created_at)} (${isoAgo(job.created_at)})</div>
+        <div>Updated</div><div>${esc(job.updated_at)} (${isoAgo(job.updated_at)})</div>
+      </div>
+      ${(job.warnings || []).length ? `<details open><summary>Warnings (${job.warnings.length})</summary>${json(job.warnings)}</details>` : ""}
+      <h3 style="font-size:14px;margin:14px 0 6px">Timeline</h3>
+      <table><tr><th>Time</th><th>Transition</th><th>Worker</th><th>Detail</th></tr>
+      ${ev.map((e, i) => {
+        const t = Date.parse(e.at), p = i ? Date.parse(ev[i - 1].at) : t;
+        return `<tr><td class="ts">${esc(new Date(t).toLocaleTimeString())}<div class="muted">+${dur((t - p) / 1000)}</div></td>
+          <td>${esc(e.from || "∅")} → <strong>${esc(e.to || "")}</strong></td>
+          <td class="mono">${esc(e.worker_id || "")}</td>
+          <td>${e.detail ? `<pre style="max-height:160px">${esc(JSON.stringify(e.detail, null, 1))}</pre>` : ""}</td></tr>`;
+      }).join("")}</table>`;
+  }
+
+  function tabTranscript(job, a) {
+    const t = a.transcript;
+    if (!t) return `<div class="empty">No transcript yet.</div>`;
+    const segs = t.segments || [];
+    const meta = Object.fromEntries(Object.entries(t).filter(([k]) => k !== "segments"));
+    const words = segs.reduce((n, s) => n + s.text.split(/\s+/).filter(Boolean).length, 0);
+    return `
+      <div class="kv small" style="margin-bottom:10px">
+        <div>Segments</div><div>${segs.length}</div><div>Words</div><div>${words}</div>
+        ${Object.entries(meta).map(([k, v]) => `<div>${esc(k)}</div><div class="mono">${esc(typeof v === "object" ? JSON.stringify(v) : v)}</div>`).join("")}
+      </div>
+      <table>${segs.map((s) => `<tr><td class="ts"><a href="https://www.youtube.com/watch?v=${esc(job.video_id)}&t=${Math.floor(s.start)}s" target="_blank" rel="noopener">${fmtTs(s.start)}</a>–${fmtTs(s.end)}</td><td>${esc(s.text)}</td></tr>`).join("")}</table>`;
+  }
+
+  function tabLlm(job, a) {
+    const tr = a.synthesis?.llm_trace;
+    if (!a.synthesis) return `<div class="empty">The summarize stage hasn't finished yet. The context appears here once it has.</div>`;
+    if (!tr) return `<div class="empty">This job was summarized by a worker without tracing. Rebuild the worker and run a new job to see the LLM context.</div>`;
+    const calls = tr.calls || [];
+    return `
+      <div class="kv small" style="margin-bottom:10px">
+        <div>Model</div><div class="mono">${esc(a.synthesis.model)}</div>
+        <div>Chunks</div><div>${(tr.chunk_ranges || []).map((r) => fmtTs(r[0]) + "–" + fmtTs(r[1])).join(", ")}</div>
+        <div>LLM calls</div><div>${calls.length} · ${dur(calls.reduce((n, c) => n + c.seconds, 0))} total</div>
+        ${Object.entries(tr.settings || {}).map(([k, v]) => `<div>${esc(k)}</div><div class="mono">${esc(v)}</div>`).join("")}
+      </div>
+      <details><summary>System prompt</summary><pre>${esc(tr.system_prompt)}</pre></details>
+      ${calls.map((c) => `
+        <details ${c.parse_error ? "open" : ""}>
+          <summary>Part ${c.part} · attempt ${c.attempt} · ${c.seconds}s · ~${c.prompt_tokens_est} tok in / ~${c.output_tokens_est} tok out
+            ${c.parse_error ? `<span class="err"> · invalid JSON</span>` : ""}</summary>
+          ${c.parse_error ? `<div class="warnbox mono small">${esc(c.parse_error)}</div>` : ""}
+          <div class="small muted" style="margin:6px 0 4px">User prompt (transcript sent)</div><pre>${esc(c.user_prompt)}</pre>
+          <div class="small muted" style="margin:10px 0 4px">Raw model output</div><pre>${esc(prettyMaybe(c.raw_output))}</pre>
+        </details>`).join("")}
+      ${(tr.partials || []).length > 1 ? `<details><summary>Per-part results before merge</summary>${json(tr.partials)}</details>` : ""}`;
+  }
+  function prettyMaybe(s) { try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; } }
+
+  function tabNotes(job, a) {
+    const s = a.synthesis;
+    if (!s) return `<div class="empty">No notes yet.</div>`;
+    const words = (s.sections || []).reduce((n, x) => n + x.heading.split(/\s+/).length
+      + x.bullets.join(" ").split(/\s+/).filter(Boolean).length, 0);
+    const vm = s.visual_moments || [];
+    return `
+      <div class="small muted" style="margin-bottom:8px">${(s.sections || []).length} sections · ~${words} words · ${vm.length} visual moments</div>
+      <h3 style="margin:0 0 4px">${esc(s.title)}</h3>
+      <p>${esc(s.tldr)}</p>
+      ${(s.sections || []).map((x, i) => `<div class="section"><h4><span class="mono muted">#${i} · ${fmtTs(x.start_sec)}</span> ${esc(x.heading)}</h4>
+        <ul>${x.bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul></div>`).join("")}
+      <h3 style="font-size:14px;margin:16px 0 6px">Visual moments</h3>
+      <table><tr><th>Time</th><th>Section</th><th>Caption</th><th>Reason</th></tr>
+      ${vm.map((m) => `<tr><td class="ts">${fmtTs(m.timestamp_sec)}</td><td>${m.section_index ?? "—"}</td><td>${esc(m.caption)}</td><td class="muted">${esc(m.reason)}</td></tr>`).join("")}</table>`;
+  }
+
+  function tabFrames(job, a) {
+    const f = a.frames;
+    if (!f) return `<div class="empty">No frames yet.</div>`;
+    const list = f.frames || [];
+    return `
+      <div class="small muted" style="margin-bottom:10px">requested ${f.requested ?? "?"} · ok ${f.ok ?? "?"}
+        ${f.stream_error ? ` · <span class="err">stream error: ${esc(f.stream_error)}</span>` : ""}</div>
+      <div class="frames">${list.map((x) => `
+        <div class="frame">
+          ${x.status === "ok" ? `<img data-key="${esc(x.object_key)}" alt="${esc(x.caption)}" />`
+                              : `<div class="empty err">${esc(x.status)}${x.error ? ": " + esc(x.error) : ""}</div>`}
+          <div class="c small">
+            <div><span class="ts mono"><a href="https://www.youtube.com/watch?v=${esc(job.video_id)}&t=${x.timestamp_sec}s" target="_blank" rel="noopener">${fmtTs(x.timestamp_sec)}</a></span>
+              · section ${x.section_index ?? "—"} ${x.bytes ? "· " + Math.round(x.bytes / 1024) + " KB" : ""}</div>
+            <div style="margin-top:4px">${esc(x.caption)}</div>
+            <div class="muted">${esc(x.reason)}</div>
+          </div>
+        </div>`).join("")}</div>`;
+  }
+
+  async function loadFrameImages() {
+    while (objectUrls.length) URL.revokeObjectURL(objectUrls.pop());
+    for (const img of document.querySelectorAll("img[data-key]")) {
+      try {
+        const r = await api(`/admin/debug/frame?key=${encodeURIComponent(img.dataset.key)}`);
+        if (!r) { img.alt = "missing"; continue; }
+        const u = URL.createObjectURL(await r.blob());
+        objectUrls.push(u);
+        img.src = u;
+      } catch (e) { img.alt = e.message; }
+    }
+  }
+
+  function tabRaw(job, a) {
+    return `<details open><summary>Job + events</summary>${json(job)}</details>
+      ${["transcript", "synthesis", "frames"].map((k) => a[k] ? `<details><summary>${k} artifact</summary>${json(a[k])}</details>` : "").join("")}`;
+  }
+
+  // ---------------------------------------------------------------- loop
+  let busy = false;
+  async function refreshAll(force = false) {
+    if (busy) return;
+    if (!token) { showAuth("Enter the ADMIN_TOKEN from your .env file to load debug data."); return; }
+    busy = true;
+    try {
+      const o = await apiJson(`/admin/debug/overview`);
+      showAuth("");
+      renderOverview(o);
+      if (selected) {
+        const sel = (o.jobs || []).find((j) => j.job_id === selected);
+        // Poll details while the job is still moving; terminal jobs only on demand.
+        if (force || !detailCache || !sel || !TERMINAL.has(sel.status) || sel.status !== detailCache.job.status) {
+          await loadDetail(force);
+        }
+      }
+      $("updated").textContent = "updated " + new Date().toLocaleTimeString();
+    } catch (e) {
+      showAuth(e.auth ? "Wrong admin token. Use ADMIN_TOKEN from your .env file." : "Error: " + e.message);
+    } finally { busy = false; }
+  }
+
+  refreshAll(true);
+  setInterval(() => { if ($("auto").checked && !document.hidden) refreshAll(); }, 3000);
+})();
+</script>
+</body>
+</html>

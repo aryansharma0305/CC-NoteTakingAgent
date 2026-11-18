@@ -14,7 +14,7 @@ from vidnotes_common.crypto import TokenCipher
 from vidnotes_common.db import make_engine
 from vidnotes_common.logs import configure_logging, get_logger
 
-from . import health, routes_admin, routes_jobs, routes_oauth
+from . import health, routes_admin, routes_debug, routes_jobs, routes_oauth
 from .errors import install_handlers
 from .publisher import Publisher
 from .state import AppState
@@ -66,6 +66,8 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     app.include_router(health.router, tags=["health"])
     app.include_router(routes_oauth.router, tags=["oauth"])
     app.include_router(routes_admin.router, tags=["admin"])
+    app.include_router(routes_debug.page_router)
+    app.include_router(routes_debug.router, tags=["debug"])
     return app
 
 

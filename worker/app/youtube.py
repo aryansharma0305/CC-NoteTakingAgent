@@ -164,7 +164,7 @@ _WS = re.compile(r"\s+")
 
 
 def merge_segments(snippets: list[dict[str, Any]], window_sec: float = 30.0) -> list[dict[str, Any]]:
-    """Normalise raw snippets into ~30-second segments: [{start, end, text}]."""
+    """Normalise raw snippets into ~window_sec segments: [{start, end, text}]."""
     segs: list[dict[str, Any]] = []
     cur: dict[str, Any] | None = None
     for s in sorted(snippets, key=lambda x: x["start"]):

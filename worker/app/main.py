@@ -18,6 +18,7 @@ from vidnotes_common.messages import WORK_QUEUE
 
 from .consumer import consume
 from .context import WorkerContext
+from .heartbeat import Heartbeat
 from .llm import make_llm
 from .ratelimit import Limiter
 from .storage import Storage
@@ -57,7 +58,12 @@ async def main() -> None:
         settings=s, engine=engine, channel=channel, jobs_exchange=jobs_x, dlx=dlx,
         limiter=Limiter(redis, s), storage=storage, llm=llm, cipher=TokenCipher(s.token_enc_key),
         worker_id=worker_id,
+        heartbeat=Heartbeat(redis, worker_id, {
+            "llm": f"{s.llm_provider}:{s.llm_model}",
+            "llm_base_url": s.llm_base_url or None,
+        }),
     )
+    hb_task = asyncio.create_task(ctx.heartbeat.run())
     log.info("worker_started", worker_id=worker_id, llm=f"{s.llm_provider}:{s.llm_model}",
              retry_delays=s.retry_delays, max_attempts=s.max_attempts)
 
@@ -74,6 +80,8 @@ async def main() -> None:
     await asyncio.wait({task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
     log.info("worker_stopping", worker_id=worker_id)
     task.cancel()
+    hb_task.cancel()
+    await ctx.heartbeat.stop()
     # Closing without acking returns any in-flight message to the queue.
     await connection.close()
     await llm.aclose()
