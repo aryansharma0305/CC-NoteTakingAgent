@@ -104,6 +104,9 @@ services:
       context: .
       dockerfile: worker/Dockerfile
     <<: *app-env
+    # Lets workers reach a local Ollama on the host (Linux needs this mapping).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # No container_name and no ports: the service is stateless and scalable.
     deploy:
       replicas: 2
