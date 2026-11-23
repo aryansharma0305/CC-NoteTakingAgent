@@ -20,6 +20,7 @@ import os
 import random
 import subprocess
 import tempfile
+import uuid
 from typing import Any
 
 from PIL import Image, ImageFilter, ImageStat
@@ -88,7 +89,18 @@ async def run(ctx: WorkerContext, job, msg) -> StageResult:
     stream_error: str | None = None
     # Frames already in S3 (from a crashed earlier attempt) don't need the stream.
     cached = {m["timestamp_sec"]: await ctx.storage.exists(frame_key(job_id, m["timestamp_sec"])) for m in todo}
-    if todo and not all(cached.values()):
+    # Summary reused from an earlier job on the same video: its frames are the same real
+    # captures at the same timestamps, so copy those bytes into this job's own keys.
+    reuse: dict[int, str] = {}
+    src_job = synthesis.get("cached_from")
+    if src_job:
+        try:
+            src_frames = await repo.get_artifact(ctx.engine, uuid.UUID(src_job), "frames") or {}
+        except ValueError:
+            src_frames = {}
+        reuse = {int(f["timestamp_sec"]): f["object_key"] for f in src_frames.get("frames", [])
+                 if f.get("status") == "ok" and f.get("object_key", "").startswith(f"jobs/{src_job}/")}
+    if todo and not all(cached[m["timestamp_sec"]] or int(m["timestamp_sec"]) in reuse for m in todo):
         try:
             maybe_fault_429(s, "youtube")
             await ctx.limiter.acquire("youtube")
@@ -107,8 +119,13 @@ async def run(ctx: WorkerContext, job, msg) -> StageResult:
         key = frame_key(job_id, t)
         async with sem:
             try:
+                copied = None
                 if cached.get(m["timestamp_sec"]):
                     data = await ctx.storage.get(key)
+                elif t in reuse:
+                    data = await ctx.storage.get(reuse[t])
+                    await ctx.storage.put(key, data)
+                    copied = reuse[t]
                 else:
                     if stream is None:
                         raise RuntimeError(stream_error or "stream unavailable")
@@ -122,6 +139,8 @@ async def run(ctx: WorkerContext, job, msg) -> StageResult:
                     await ctx.storage.put(key, data)
                 out = {**m, "status": "ok", "object_key": key, "sha256": hashlib.sha256(data).hexdigest(),
                        "bytes": len(data)}
+                if copied:
+                    out["copied_from"] = copied
             except Exception as e:  # noqa: BLE001 - every per-frame failure degrades gracefully
                 out = {**m, "status": "failed", "error": ErrorCode.FRAME_EXTRACTION_FAILED,
                        "detail": str(e)[:300]}
@@ -133,7 +152,9 @@ async def run(ctx: WorkerContext, job, msg) -> StageResult:
     results.extend(await asyncio.gather(*(one(m) for m in todo)))
     results.sort(key=lambda r: r["timestamp_sec"])
     ok = [r for r in results if r["status"] == "ok"]
+    n_copied = sum(1 for r in ok if r.get("copied_from"))
     return StageResult(
+        note={"cached_from": src_job, "frames_reused": n_copied} if n_copied else {},
         artifact={"frames": results, "stream_error": stream_error, "requested": len(moments), "ok": len(ok)},
         object_keys=[r["object_key"] for r in ok],
     )

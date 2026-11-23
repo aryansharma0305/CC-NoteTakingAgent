@@ -1,7 +1,7 @@
 // chrome.storage.local layout
 //   settings: { gatewayUrl, parentId, noteOptions: { detail, max_frames, study_aids, include_transcript, language } }
 //   auth:     { accessToken, workspaceName, workspaceIcon, templateId, mode: "oauth" | "internal" }
-//   jobIndex: [jobKey, ...]           newest first, max 20 -- written only by background.js
+//   jobIndex: [jobKey, ...]           newest first, max 200 -- written by background.js (and removals by UI pages)
 //   job:<key>: { key, job_id, video_id, title, status, progress, ... }  written by background + popup
 
 // Per-job preferences sent as `options` with every POST /jobs. null = server default.
@@ -13,7 +13,7 @@ export const DEFAULT_NOTE_OPTIONS = {
   language: "", // "" = same language as the video
 };
 export const DEFAULT_SETTINGS = { gatewayUrl: "http://localhost:8000", parentId: "", noteOptions: DEFAULT_NOTE_OPTIONS };
-export const MAX_JOBS = 20;
+export const MAX_JOBS = 200; // the history page shows them all; the popup the newest few
 
 export async function getSettings() {
   const { settings } = await chrome.storage.local.get("settings");
@@ -76,6 +76,7 @@ export function jobOptionsPayload(noteOptions) {
   const out = { detail: o.detail, study_aids: !!o.study_aids, include_transcript: !!o.include_transcript };
   if (o.max_frames !== null && o.max_frames !== "" && o.max_frames !== undefined) out.max_frames = Number(o.max_frames);
   if (o.language) out.language = o.language;
+  if (o.fresh) out.fresh = true; // one-off: skip the server's result cache
   return out;
 }
 

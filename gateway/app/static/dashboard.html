@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Video Notes Metrics</title>
+<style>
+  :root {
+    --bg: #f6f6fb; --panel: #ffffff; --panel-2: #f1f1f7; --border: #e4e4ee; --text: #191b29; --muted: #6e7287;
+    --accent: #6d5efc; --accent-2: #a05cff; --ok: #0f9d6e; --warn: #c27c0e; --bad: #e03e5e; --grid: #ececf3;
+    --s1: #6d5efc; --s2: #0f9d6e; --s3: #e03e5e; --s4: #c9c9d9;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111219; --panel: #1b1c27; --panel-2: #22232f; --border: #2c2d3c; --text: #ececf4; --muted: #9a9db3;
+      --accent: #8b7fff; --accent-2: #b98aff; --ok: #3fd29c; --warn: #f0b14a; --bad: #ff7088; --grid: #262735;
+      --s1: #8b7fff; --s2: #3fd29c; --s3: #ff7088; --s4: #3a3b4d;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111219; --panel: #1b1c27; --panel-2: #22232f; --border: #2c2d3c; --text: #ececf4; --muted: #9a9db3;
+    --accent: #8b7fff; --accent-2: #b98aff; --ok: #3fd29c; --warn: #f0b14a; --bad: #ff7088; --grid: #262735;
+    --s1: #8b7fff; --s2: #3fd29c; --s3: #ff7088; --s4: #3a3b4d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+           padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 16px; margin: 0 6px 0 0; display: flex; align-items: center; gap: 8px; }
+  .logo { width: 26px; height: 26px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: inline-block; }
+  .spacer { flex: 1; }
+  input, select, button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border);
+                          border-radius: 8px; padding: 5px 9px; }
+  button { cursor: pointer; } button:hover { border-color: var(--accent); }
+  a { color: var(--accent); }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; min-width: 0; }
+  .card h2 { font-size: 12.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 12px; }
+  .card h2 small { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .tiles { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+  .tile b { display: block; font-size: 24px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .tile span { color: var(--muted); font-size: 12.5px; }
+  .tile .sub { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .tile.good b { color: var(--ok); } .tile.bad b { color: var(--bad); } .tile.warn b { color: var(--warn); }
+  .row2 { display: grid; gap: 14px; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+  .row3 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  @media (max-width: 900px) { .row2 { grid-template-columns: 1fr; } }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  td, th { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.n, th.n { text-align: right; }
+  tr.hl td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .muted { color: var(--muted); } .small { font-size: 12px; }
+  .empty { color: var(--muted); padding: 16px 0; text-align: center; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); }
+  .pill.ok { color: var(--ok); } .pill.bad { color: var(--bad); } .pill.warn { color: var(--warn); }
+  #auth { border-color: var(--warn); }
+  .tip { position: fixed; pointer-events: none; z-index: 10; background: var(--text); color: var(--bg); padding: 5px 8px; border-radius: 6px; font-size: 12px; display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="logo"></span>Video Notes · Metrics</h1>
+  <select id="hours" aria-label="Time window">
+    <option value="1">Last hour</option><option value="6">Last 6 hours</option>
+    <option value="24" selected>Last 24 hours</option><option value="168">Last 7 days</option><option value="720">Last 30 days</option>
+  </select>
+  <span class="spacer"></span>
+  <input id="token" type="password" placeholder="Admin token (ADMIN_TOKEN)" size="22" autocomplete="off" />
+  <button id="saveToken">Save</button>
+  <label class="small"><input type="checkbox" id="auto" checked /> auto-refresh</label>
+  <button id="theme" title="Toggle theme">◐</button>
+  <a href="/debug" class="small">Debug panel →</a>
+  <span id="updated" class="small muted"></span>
+</header>
+
+<main>
+  <div id="auth" class="card" hidden></div>
+  <section class="tiles" id="tiles"></section>
+
+  <div class="row2">
+    <section class="card"><h2>Jobs per hour</h2><div id="perHour"></div>
+      <div class="legend"><span><i style="background:var(--s2)"></i>completed</span><span><i style="background:var(--s3)"></i>failed / dead-lettered</span><span><i style="background:var(--s4)"></i>other (running, rejected…)</span></div></section>
+    <section class="card"><h2>Time per stage <small>(avg bar · p95 tick)</small></h2><div id="stages"></div></section>
+  </div>
+
+  <div class="row3">
+    <section class="card"><h2>End-to-end latency by video length</h2><div id="byLen"></div>
+      <p class="small muted">Submit → page published, completed jobs only. The highlighted row is the graded 15–20 minute range.</p></section>
+    <section class="card"><h2>Where the time goes</h2><div id="waits"></div></section>
+  </div>
+
+  <div class="row3">
+    <section class="card"><h2>Crash recovery</h2><div id="recovery"></div></section>
+    <section class="card"><h2>Retries, failures and DLQ</h2><div id="reliability"></div></section>
+  </div>
+
+  <div class="row3">
+    <section class="card"><h2>LLM</h2><div id="llm"></div></section>
+    <section class="card"><h2>Live</h2><div id="live"></div></section>
+  </div>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* blocked */ } },
+  };
+  let token = store.get("vn-admin-token") || ""; // shared with /debug
+  const theme = store.get("vn-theme");
+  if (theme) document.documentElement.dataset.theme = theme;
+  $("token").value = token;
+  $("hours").value = store.get("vn-metrics-hours") || "24";
+
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const secs = (v) => v == null ? "—" : v < 60 ? `${Math.round(v * 10) / 10}s` : `${Math.floor(v / 60)}m ${String(Math.round(v % 60)).padStart(2, "0")}s`;
+  const num = (v) => v == null ? "—" : v;
+
+  // ---- tooltip
+  const tip = $("tip");
+  document.addEventListener("mousemove", (e) => {
+    const t = e.target.closest && e.target.closest("[data-tip]");
+    if (!t) { tip.style.display = "none"; return; }
+    tip.textContent = t.dataset.tip;
+    tip.style.display = "block";
+    tip.style.left = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 8) + "px";
+    tip.style.top = e.clientY + 14 + "px";
+  });
+
+  function tile(value, label, sub, cls = "") {
+    return `<div class="tile ${cls}"><b>${esc(value)}</b><span>${esc(label)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ""}</div>`;
+  }
+
+  // ---- charts (inline SVG)
+  function perHourChart(rows) {
+    if (!rows.length || !rows.some((r) => r.submitted)) return `<div class="empty">No jobs in this window.</div>`;
+    const W = 640, H = 200, pad = { l: 28, r: 8, t: 8, b: 22 };
+    const max = Math.max(1, ...rows.map((r) => r.submitted));
+    const step = Math.ceil(max / 4);
+    const bw = (W - pad.l - pad.r) / rows.length;
+    const y = (v) => pad.t + (H - pad.t - pad.b) * (1 - v / (step * 4));
+    let g = "";
+    for (let i = 0; i <= 4; i++) {
+      const v = step * i;
+      g += `<line x1="${pad.l}" x2="${W - pad.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
+      g += `<text x="${pad.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+    }
+    const every = Math.ceil(rows.length / 8);
+    rows.forEach((r, i) => {
+      const x = pad.l + i * bw + bw * 0.15, w = Math.max(1, bw * 0.7);
+      const other = r.submitted - r.completed - r.failed;
+      let top = y(0);
+      for (const [v, c] of [[r.completed, "var(--s2)"], [r.failed, "var(--s3)"], [other, "var(--s4)"]]) {
+        if (v <= 0) continue;
+        const h = y(0) - y(v);
+        top -= h;
+        g += `<rect x="${x}" y="${top}" width="${w}" height="${h}" rx="2" fill="${c}"/>`;
+      }
+      const d = new Date(r.hour);
+      const label = rows.length > 48 ? d.toLocaleDateString([], { day: "numeric", month: "short" }) : d.toLocaleTimeString([], { hour: "2-digit" });
+      g += `<rect x="${pad.l + i * bw}" y="${pad.t}" width="${bw}" height="${H - pad.t - pad.b}" fill="transparent"
+             data-tip="${esc(d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }))}: ${r.submitted} submitted · ${r.completed} completed · ${r.failed} failed"/>`;
+      if (i % every === 0) g += `<text x="${pad.l + i * bw + bw / 2}" y="${H - 6}" text-anchor="middle">${esc(label)}</text>`;
+    });
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Jobs per hour">${g}</svg>`;
+  }
+
+  function stageChart(st) {
+    const names = { TRANSCRIBE: "Transcribe", SUMMARIZE: "Summarize", EXTRACT_FRAMES: "Extract frames", PUBLISH: "Publish" };
+    const rows = Object.entries(st);
+    if (!rows.some(([, s]) => s.count)) return `<div class="empty">No finished stages yet.</div>`;
+    const max = Math.max(1, ...rows.map(([, s]) => s.p95 || s.avg || 0));
+    const W = 420, rowH = 40, lw = 100, H = rows.length * rowH + 4;
+    let g = "";
+    rows.forEach(([k, s], i) => {
+      const y = i * rowH + 6, bw = W - lw - 70;
+      g += `<text x="0" y="${y + 15}" style="fill:var(--text);font-size:12.5px">${names[k] || k}</text>`;
+      g += `<rect x="${lw}" y="${y + 4}" width="${bw}" height="14" rx="7" fill="var(--panel-2)"/>`;
+      if (s.count) {
+        g += `<rect x="${lw}" y="${y + 4}" width="${Math.max(3, bw * (s.avg / max))}" height="14" rx="7" fill="url(#gr)"
+               data-tip="${names[k] || k}: avg ${secs(s.avg)} · p50 ${secs(s.p50)} · p95 ${secs(s.p95)} · max ${secs(s.max)} · ${s.count} runs"/>`;
+        g += `<line x1="${lw + bw * (s.p95 / max)}" x2="${lw + bw * (s.p95 / max)}" y1="${y}" y2="${y + 22}" stroke="var(--text)" stroke-width="2" opacity=".55"/>`;
+        g += `<text x="${W}" y="${y + 15}" text-anchor="end" style="fill:var(--text);font-weight:600">${secs(s.avg)}</text>`;
+        g += `<text x="${lw}" y="${y + 33}">p95 ${secs(s.p95)} · ${s.count} runs</text>`;
+      } else g += `<text x="${W}" y="${y + 15}" text-anchor="end">—</text>`;
+    });
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Time per stage">
+      <defs><linearGradient id="gr"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent-2)"/></linearGradient></defs>${g}</svg>`;
+  }
+
+  function statTable(rows, { hl } = {}) {
+    return `<table><tr><th></th><th class="n">n</th><th class="n">p50</th><th class="n">p95</th><th class="n">max</th></tr>
+      ${rows.map(([label, s]) => `<tr class="${label === hl ? "hl" : ""}"><td>${esc(label)}</td><td class="n">${s.count}</td>
+        <td class="n">${secs(s.p50)}</td><td class="n">${secs(s.p95)}</td><td class="n">${secs(s.max)}</td></tr>`).join("")}</table>`;
+  }
+
+  function kv(pairs) {
+    return `<table>${pairs.map(([k, v]) => `<tr><td class="muted">${esc(k)}</td><td class="n">${v}</td></tr>`).join("")}</table>`;
+  }
+
+  function render(m) {
+    const L = m.latency, R = m.reliability, rec = m.recovery, llm = m.llm, J = m.jobs;
+    const done = (J.by_status.COMPLETED || 0) + (J.by_status.COMPLETED_WITH_WARNINGS || 0);
+    const finished = done + (J.by_status.FAILED || 0) + (J.by_status.DEAD_LETTERED || 0);
+    $("tiles").innerHTML = [
+      tile(J.total, "jobs in window", `${J.all_time} all time · ${J.in_flight} running`),
+      tile(finished ? `${Math.round(100 * done / finished)}%` : "—", "success rate", `${done} of ${finished} finished jobs`,
+           finished && done / finished >= 0.9 ? "good" : finished ? "warn" : ""),
+      tile(secs(L.end_to_end_sec.p50), "median end-to-end", `p95 ${secs(L.end_to_end_sec.p95)}`),
+      tile(llm.tokens_per_sec.p50 == null ? "—" : `${llm.tokens_per_sec.p50}`, "LLM tokens / s", `${llm.calls} calls · ${llm.parse_errors} bad outputs`),
+      tile(R.retries_total, "retries scheduled", `${R.llm_429s} rate-limited · ${R.lock_deferrals} lock waits`, R.retries_total ? "warn" : ""),
+      tile(R.dead_lettered, "dead-lettered", `${R.failed} failed (not retryable)`, R.dead_lettered ? "bad" : "good"),
+      tile(rec.count, "crash recoveries", rec.recovery_sec.count ? `≤ ${secs(rec.recovery_sec.avg)} avg to re-claim` : "none recorded", rec.count ? "good" : ""),
+      tile(m.cache.hits, "cache hits", Object.entries(m.cache.hits_by_stage).map(([k, v]) => `${k.toLowerCase()} ${v}`).join(" · ") || "—"),
+    ].join("");
+
+    $("perHour").innerHTML = perHourChart(J.per_hour);
+    $("stages").innerHTML = stageChart(L.stage_sec);
+    $("byLen").innerHTML = statTable([...Object.entries(L.by_video_length), ["All videos", L.end_to_end_sec]], { hl: "15–20 min" });
+    $("waits").innerHTML = statTable([["Queue wait (submit → first worker)", L.queue_wait_sec],
+                                      ["Hand-off between stages", L.handoff_wait_sec],
+                                      ...Object.entries(L.stage_sec).map(([k, s]) => [`Stage: ${k.toLowerCase().replace("_", " ")}`, s])]) +
+      (L.slowest.length ? `<p class="small muted" style="margin:10px 0 4px">Slowest jobs</p><table>${L.slowest.map((s) =>
+        `<tr><td>${esc(s.title || s.job_id.slice(0, 8))}</td><td class="n muted">${s.duration_sec ? secs(s.duration_sec) + " video" : ""}</td><td class="n">${secs(s.seconds)}</td></tr>`).join("")}</table>` : "");
+
+    $("recovery").innerHTML = rec.count
+      ? `${kv([["Recoveries", rec.count], ["Time to re-claim (avg / max)", `${secs(rec.recovery_sec.avg)} / ${secs(rec.recovery_sec.max)}`]])}
+         <p class="small muted" style="margin:10px 0 4px">Time = a healthy worker's claim minus the dead worker's last heartbeat (beats every 5 s), so it is an upper bound.</p>
+         <table><tr><th>When</th><th>Stage</th><th>Dead → new worker</th><th class="n">Re-claimed in</th></tr>${rec.events.map((r) =>
+           `<tr><td class="small">${esc(new Date(r.at).toLocaleString())}</td><td>${esc(r.stage)}</td>
+            <td class="mono">${esc(String(r.from_worker).slice(0, 12))} → ${esc(String(r.to_worker).slice(0, 12))}</td><td class="n">${secs(r.recovery_sec)}</td></tr>`).join("")}</table>`
+      : `<div class="empty">No worker crashes recorded in this window.<br><span class="small">Try: <span class="mono">ops/kill_worker_mid_frames.sh &lt;url&gt; SUMMARIZING</span></span></div>`;
+
+    const codes = Object.entries(R.retries_by_code);
+    const fails = Object.entries(R.failures_by_code);
+    $("reliability").innerHTML = kv([["Retries scheduled", R.retries_total], ["…of which rate limits (429)", R.llm_429s],
+                                     ["Lock waits (job busy on another worker)", R.lock_deferrals], ["Dead-lettered", R.dead_lettered], ["Failed", R.failed]]) +
+      (codes.length ? `<p class="small muted" style="margin:10px 0 4px">Retries by cause</p>${kv(codes.map(([k, v]) => [k, v]))}` : "") +
+      (fails.length ? `<p class="small muted" style="margin:10px 0 4px">Failures by cause</p>${kv(fails.map(([k, v]) => [k.replace(":", " · "), v]))}` : "");
+
+    $("llm").innerHTML = kv([
+      ["Model", esc(Object.keys(llm.models).join(", ") || "—")],
+      ["Calls · bad outputs", `${llm.calls} · ${llm.parse_errors}`],
+      ["Chunks reused after a crash", llm.resumed_from_checkpoint],
+      ["Tokens / s (p50 · p95)", `${num(llm.tokens_per_sec.p50)} · ${num(llm.tokens_per_sec.p95)}`],
+      ["Call time (p50 · p95)", `${secs(llm.call_sec.p50)} · ${secs(llm.call_sec.p95)}`],
+      ["Queued for the model (p50 · max)", `${secs(llm.queued_sec.p50)} · ${secs(llm.queued_sec.max)}`],
+    ]);
+
+    const lv = m.live || {};
+    if (lv.error) $("live").innerHTML = `<div class="empty">${esc(lv.error)}</div>`;
+    else {
+      const ws = lv.workers || [];
+      $("live").innerHTML = kv([
+        ["Workers", ws.length ? ws.map((w) => `<span class="pill ${w.state === "idle" ? "ok" : "warn"}" title="${esc(w.worker_id)}">${esc(String(w.worker_id).slice(0, 8))} · ${esc(w.state)}${w.stage ? " · " + esc(w.stage) : ""}</span>`).join(" ") : "none"],
+        ...Object.entries(lv.queues || {}).map(([k, v]) => [k, v < 0 ? "—" : v]),
+        ["LLM slots in use", lv.llm_gate ? `${lv.llm_gate.in_flight}${lv.llm_gate.limit ? " of " + lv.llm_gate.limit : ""} · ${lv.llm_gate.waiting} waiting` : "—"],
+      ]);
+    }
+    $("updated").textContent = "updated " + new Date().toLocaleTimeString();
+  }
+
+  async function load() {
+    const box = $("auth");
+    if (!token) { box.hidden = false; box.textContent = "Enter the ADMIN_TOKEN from your .env file to load metrics."; return; }
+    try {
+      const r = await fetch(`/admin/metrics?hours=${$("hours").value}`, { headers: { "X-Admin-Token": token } });
+      if (r.status === 401) { box.hidden = false; box.textContent = "Wrong admin token. Use ADMIN_TOKEN from your .env file."; return; }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      box.hidden = true;
+      render(await r.json());
+    } catch (e) {
+      box.hidden = false;
+      box.textContent = "Couldn't load metrics: " + e.message;
+    }
+  }
+
+  $("saveToken").onclick = () => { token = $("token").value.trim(); store.set("vn-admin-token", token); load(); };
+  $("token").addEventListener("keydown", (e) => { if (e.key === "Enter") $("saveToken").click(); });
+  $("hours").onchange = () => { store.set("vn-metrics-hours", $("hours").value); load(); };
+  $("theme").onclick = () => {
+    const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    store.set("vn-theme", next);
+  };
+  setInterval(() => { if ($("auto").checked && !document.hidden) load(); }, 10000);
+  load();
+})();
+</script>
+</body>
+</html>

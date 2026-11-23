@@ -73,6 +73,13 @@ language (e.g. English notes for a Spanish video). The popup also shows server h
 per job, *Try again* for failed jobs, *Copy link*, and *Clear finished*. Clicking Take Notes twice
 on the same video does not create a second job while the first is running.
 
+The **Take Notes** button follows the job for the video on screen: a progress ring with the
+current stage ("Summarizing 42%"), then **Notes ready ✓** (amber if there were warnings), which opens
+the Notion page (Shift+click takes notes again), or **Retry notes** after a failure. The popup shows
+the newest 6 jobs; the clock icon (or *View all*) opens the **Notes history** page with every job
+(up to 200): search (`/` to focus), status filters, sorting, live progress, open / copy link /
+re-run / remove per job, summary stats, and *Export CSV*.
+
 ## 3. Connect Notion
 
 Either option works. The extension stores the token in `chrome.storage.local` and sends it with each

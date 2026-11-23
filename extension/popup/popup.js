@@ -18,6 +18,7 @@ import { thumbUrl, videoIdFromUrl } from "../lib/youtube.js";
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 2000;
 const HEALTH_MS = 10000;
+const POPUP_LIMIT = 6; // newest jobs shown here; the history page has the rest
 const SHORT = { QUEUED: "Queued", TRANSCRIBING: "Transcript", SUMMARIZING: "Summary",
                 EXTRACTING_FRAMES: "Frames", PUBLISHING: "Publish" };
 let jobs = [];
@@ -197,7 +198,11 @@ function render() {
   const connected = $("connect").hidden;
   const keys = new Set(jobs.map((j) => j.key));
   for (const k of cardCache.keys()) if (!keys.has(k)) cardCache.delete(k);
-  list.replaceChildren(...jobs.map(cardFor));
+  const shown = jobs.slice(0, POPUP_LIMIT);
+  list.replaceChildren(...shown.map(cardFor));
+  const extra = jobs.length - shown.length;
+  $("more").hidden = !connected || extra <= 0;
+  $("more-btn").textContent = `View all ${jobs.length} in history →`;
   list.hidden = !jobs.length || !connected;
   $("list-head").hidden = !jobs.length || !connected;
   $("count").textContent = jobs.length;
@@ -281,6 +286,9 @@ async function connect() {
 
 $("connect-btn").addEventListener("click", connect);
 $("settings").addEventListener("click", () => chrome.runtime.openOptionsPage());
+const openHistory = () => chrome.tabs.create({ url: chrome.runtime.getURL("history/history.html") });
+$("history").addEventListener("click", openHistory);
+$("more-btn").addEventListener("click", openHistory);
 $("use-token").addEventListener("click", (e) => {
   e.preventDefault();
   chrome.runtime.openOptionsPage();

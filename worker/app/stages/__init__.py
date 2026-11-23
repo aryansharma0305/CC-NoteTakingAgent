@@ -17,6 +17,7 @@ class StageResult:
     object_keys: list[str] = field(default_factory=list)
     job_fields: dict[str, Any] = field(default_factory=dict)
     final_status: JobStatus | None = None  # set only by the publish stage
+    note: dict[str, Any] = field(default_factory=dict)  # extra fields for the stage_done event (e.g. cached_from)
 
 
 # Name of the job_artifacts row each stage produces.

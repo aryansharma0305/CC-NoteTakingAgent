@@ -53,6 +53,28 @@ async def put_artifact(
     await conn.execute(stmt)
 
 
+async def find_cached_artifact(
+    engine: AsyncEngine, *, video_id: str, stage: str, cache_key: str, exclude_job: uuid.UUID
+) -> tuple[uuid.UUID, dict[str, Any], Row] | None:
+    """Newest artifact of `stage` from ANOTHER job on the same video whose data carries
+    this cache_key. Returns (source job id, artifact data, source job row)."""
+    q = (
+        select(job_artifacts.c.job_id, job_artifacts.c.data, jobs)
+        .join(jobs, jobs.c.id == job_artifacts.c.job_id)
+        .where(
+            jobs.c.video_id == video_id,
+            jobs.c.id != exclude_job,
+            job_artifacts.c.stage == stage,
+            job_artifacts.c.data.contains({"cache_key": cache_key}),
+        )
+        .order_by(job_artifacts.c.created_at.desc())
+        .limit(1)
+    )
+    async with engine.connect() as conn:
+        r = (await conn.execute(q)).first()
+    return (r.job_id, r.data, r) if r else None
+
+
 class DBPublishStore:
     """notion_publisher.PublishStateStore backed by the jobs row."""
 

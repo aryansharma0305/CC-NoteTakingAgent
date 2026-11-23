@@ -8,6 +8,7 @@ from typing import Any
 from vidnotes_common.errors import ErrorCode, FatalError, RetryableError
 from vidnotes_common.youtube import fmt_ts
 
+from .. import repo
 from .. import youtube as yt
 from ..context import WorkerContext
 from . import StageResult, maybe_fault_429
@@ -31,9 +32,33 @@ def raise_too_long(duration: int, max_duration: int) -> None:
     )
 
 
+def transcript_cache_key(video_id: str, window_sec: float) -> str:
+    return f"tr1:{video_id}:w{window_sec:g}"
+
+
+def use_cache(ctx: WorkerContext, msg) -> bool:
+    opts = getattr(msg, "options", None)
+    return bool(ctx.settings.result_cache) and not (opts is not None and opts.fresh)
+
+
 async def run(ctx: WorkerContext, job, msg) -> StageResult:
     s = ctx.settings
     vid = job.video_id
+    cache_key = transcript_cache_key(vid, s.segment_window_sec)
+
+    if use_cache(ctx, msg):
+        hit = await repo.find_cached_artifact(ctx.engine, video_id=vid, stage="transcript", cache_key=cache_key,
+                                              exclude_job=job.id)
+        if hit:
+            src_id, data, src = hit
+            duration = job.duration_sec or data.get("duration_sec") or src.duration_sec
+            if duration and duration > s.max_duration_sec:  # Constraint A holds on a cache hit too
+                raise_too_long(int(duration), s.max_duration_sec)
+            return StageResult(
+                artifact={**data, "cache_key": cache_key, "cached_from": str(src_id)},
+                job_fields={"video_title": job.video_title or src.video_title, "duration_sec": duration},
+                note={"cached_from": str(src_id)},
+            )
     proxy = s.yt_proxy_url or None
     title: str | None = job.video_title
     duration: int | None = job.duration_sec
@@ -93,6 +118,7 @@ async def run(ctx: WorkerContext, job, msg) -> StageResult:
             "duration_sec": duration,
             "chars": sum(len(x["text"]) for x in segments),
             "last_ts": fmt_ts(segments[-1]["end"]),
+            "cache_key": cache_key,
         },
         job_fields={"video_title": title, "duration_sec": duration},
     )

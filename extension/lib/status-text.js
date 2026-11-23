@@ -145,8 +145,12 @@ export function elapsedText(job, now = Date.now()) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 }
 
+// Failures that would just happen again with the same video (re-running is pointless).
+const PERMANENT = new Set(["VIDEO_TOO_LONG", "LIVE_STREAM", "INVALID_URL"]);
+
 export function canRetry(job) {
-  return ["FAILED", "DEAD_LETTERED", "REJECTED"].includes(job.status) && !!job.video_id;
+  const code = job.error && job.error.code;
+  return ["FAILED", "DEAD_LETTERED", "REJECTED"].includes(job.status) && !!job.video_id && !PERMANENT.has(code);
 }
 
 export function needsReconnect(job) {

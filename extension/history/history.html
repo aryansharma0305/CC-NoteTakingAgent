@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Video Notes — History</title>
+    <link rel="stylesheet" href="history.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="top-inner">
+        <div class="brand">
+          <span class="logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.5V8h4.5L14 3.5zM7 12h10v1.6H7V12zm0 3.4h10V17H7v-1.6zm0-6.8h5v1.6H7V8.6z"/></svg>
+          </span>
+          <div>
+            <h1>Notes history</h1>
+            <p class="muted small">Every video you've sent to Video Notes, newest first.</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button id="export" class="ghost" title="Download this list as a CSV file">Export CSV</button>
+          <button id="clear" class="ghost" title="Remove finished and failed jobs from this list">Clear finished</button>
+          <button id="settings" class="secondary">Settings</button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="stats" id="stats" aria-label="Summary"></section>
+
+      <div class="toolbar">
+        <label class="search">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M10 2a8 8 0 0 1 6.3 12.9l5.4 5.4-1.4 1.4-5.4-5.4A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></svg>
+          <input id="q" type="search" placeholder="Search by title…" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="chips" role="tablist" aria-label="Filter by status">
+          <button data-filter="all" role="tab">All <span></span></button>
+          <button data-filter="active" role="tab">In progress <span></span></button>
+          <button data-filter="done" role="tab">Done <span></span></button>
+          <button data-filter="warn" role="tab">With warnings <span></span></button>
+          <button data-filter="failed" role="tab">Failed <span></span></button>
+        </div>
+        <select id="sort" aria-label="Sort">
+          <option value="new">Newest first</option>
+          <option value="old">Oldest first</option>
+          <option value="title">Title A–Z</option>
+        </select>
+      </div>
+
+      <div id="banner" class="banner" hidden></div>
+      <div id="list" class="list"></div>
+
+      <section id="empty" class="empty" hidden>
+        <svg viewBox="0 0 120 80" width="120" height="80" aria-hidden="true">
+          <rect x="10" y="10" width="62" height="42" rx="8" fill="var(--accent-soft)"/>
+          <path d="M35 24l14 7-14 7z" fill="var(--accent)"/>
+          <rect x="58" y="30" width="52" height="40" rx="8" fill="var(--card)" stroke="var(--border)" stroke-width="2"/>
+          <rect x="66" y="40" width="30" height="4" rx="2" fill="var(--accent)"/>
+          <rect x="66" y="50" width="36" height="4" rx="2" fill="var(--muted)" opacity=".4"/>
+        </svg>
+        <p id="empty-title"><strong>No notes yet</strong></p>
+        <p id="empty-text" class="muted small">Open a YouTube video and click <em>Take Notes</em> in the player.</p>
+      </section>
+    </main>
+
+    <template id="row-tpl">
+      <article class="row">
+        <a class="thumb-wrap" target="_blank" rel="noopener" title="Open the video">
+          <img class="thumb" alt="" loading="lazy" width="160" height="90" />
+          <span class="dur" hidden></span>
+        </a>
+        <div class="body">
+          <div class="line1">
+            <h2 class="title"></h2>
+            <span class="pill"></span>
+          </div>
+          <div class="meta muted small"></div>
+          <div class="bar" hidden><div class="bar-fill"></div></div>
+          <div class="detail small"></div>
+          <div class="actions"></div>
+        </div>
+      </article>
+    </template>
+
+    <script type="module" src="history.js"></script>
+  </body>
+</html>

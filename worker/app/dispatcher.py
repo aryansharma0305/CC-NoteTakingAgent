@@ -16,6 +16,7 @@ below is written so that redelivery is harmless:
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -56,7 +57,8 @@ RUNNERS = {
 }
 
 
-async def handle(ctx: WorkerContext, msg: StageMessage, headers: dict[str, Any] | None = None) -> None:
+async def handle(ctx: WorkerContext, msg: StageMessage, headers: dict[str, Any] | None = None,
+                 *, redelivered: bool = False) -> None:
     async with ctx.engine.connect() as raw:
         lockconn = await raw.execution_options(isolation_level="AUTOCOMMIT")
         if not await repo.try_lock(lockconn, msg.job_id):
@@ -64,9 +66,20 @@ async def handle(ctx: WorkerContext, msg: StageMessage, headers: dict[str, Any] 
             await defer(ctx, msg, headers)
             return
         try:
-            await _handle_locked(ctx, msg, headers)
+            await _handle_locked(ctx, msg, headers, redelivered=redelivered)
         finally:
             await repo.unlock(lockconn, msg.job_id)
+
+
+async def _last_heartbeat(ctx: WorkerContext, worker_id: str) -> float | None:
+    hb = ctx.heartbeat
+    if hb is None:
+        return None
+    try:
+        raw = await hb.redis.get(f"vn:worker:{worker_id}")
+        return float(json.loads(raw)["last_seen"]) if raw else None
+    except Exception:  # noqa: BLE001 - metrics only
+        return None
 
 
 async def publish_next(ctx: WorkerContext, msg: StageMessage, stage: Stage, headers: dict[str, Any] | None) -> None:
@@ -82,7 +95,8 @@ async def publish_next(ctx: WorkerContext, msg: StageMessage, stage: Stage, head
     )
 
 
-async def _handle_locked(ctx: WorkerContext, msg: StageMessage, headers: dict[str, Any] | None) -> None:
+async def _handle_locked(ctx: WorkerContext, msg: StageMessage, headers: dict[str, Any] | None,
+                         *, redelivered: bool = False) -> None:
     job = await repo.load_job(ctx.engine, msg.job_id)
     if job is None:
         log.warning("unknown_job_dropped", job_id=str(msg.job_id))
@@ -113,10 +127,14 @@ async def _handle_locked(ctx: WorkerContext, msg: StageMessage, headers: dict[st
     # x-delivery-count > 0: the broker redelivered this message because the worker that
     # held it died (or nacked). Record it so the timeline shows the recovery explicitly.
     deliveries = int((headers or {}).get("x-delivery-count") or 0)
-    if deliveries:
-        detail["redelivered"] = deliveries
+    if redelivered or deliveries:
+        detail["redelivered"] = max(deliveries, 1)
         if job.worker_id and job.worker_id != ctx.worker_id and status == stage_status:
             detail["recovered_from"] = job.worker_id
+            # Recovery time = now - the dead worker's last heartbeat (beats every 5 s, kept 20 s).
+            last_seen = await _last_heartbeat(ctx, job.worker_id)
+            if last_seen:
+                detail["recovery_sec"] = round(max(0.0, time.time() - last_seen), 1)
     async with ctx.engine.begin() as conn:
         if status == JobStatus.QUEUED:
             ok = await cas_transition(
@@ -167,7 +185,8 @@ async def complete(
 ) -> None:
     stage_status = STAGE_STATUS[msg.stage]
     fields = dict(result.job_fields) if result else {}
-    detail = {"event": "stage_done", "stage": str(msg.stage), "seconds": round(elapsed, 2)}
+    detail = {"event": "stage_done", "stage": str(msg.stage), "seconds": round(elapsed, 2),
+              **(result.note if result else {})}
 
     if result is not None and result.final_status is not None:
         async with ctx.engine.begin() as conn:

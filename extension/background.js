@@ -96,7 +96,8 @@ async function submitJob({ videoId, url, title, options, force }) {
     options: optionsPayload,
   });
 
-  const base = { video_id: videoId, title: title || "YouTube video", submittedAt: Date.now(), options: optionsPayload };
+  const { fresh: _fresh, ...keptOptions } = optionsPayload; // "regenerate" is one-off, not remembered for re-runs
+  const base = { video_id: videoId, title: title || "YouTube video", submittedAt: Date.now(), options: keptOptions };
   if (res.status === 202 && res.data) {
     const job = {
       ...base,
@@ -121,26 +122,31 @@ async function submitJob({ videoId, url, title, options, force }) {
   return { ok: false, tone: "error", message: describeJob(job).detail };
 }
 
-async function retryJob(key) {
+async function retryJob(key, fresh = false) {
   const job = (await getJobs()).find((j) => j.key === key);
   if (!job) return { ok: false, message: "That job is gone." };
-  return submitJob({ videoId: job.video_id, title: job.title, options: job.options, force: true });
+  const options = { ...(job.options || {}), ...(fresh ? { fresh: true } : {}) };
+  return submitJob({ videoId: job.video_id, title: job.title, options, force: true });
+}
+
+// Fetch one job from the gateway and store it (notifies when it just finished).
+async function refreshJob(job, gatewayUrl) {
+  if (!job || !job.job_id || TERMINAL.has(job.status)) return job;
+  const res = await api.getJob(gatewayUrl, job.job_id);
+  if (res.status === 404) return updateJob(job.key, { status: "FAILED", error: { code: "JOB_NOT_FOUND" } });
+  if (!res.ok || !res.data) return job;
+  const next = await updateJob(job.key, { ...res.data, title: res.data.video_title || job.title });
+  if (next && TERMINAL.has(next.status)) {
+    notifyFinished(next);
+    await refreshBadge();
+  }
+  return next;
 }
 
 async function pollActiveJobs() {
   const { gatewayUrl } = await getSettings();
   const jobs = (await getJobs()).filter((j) => j.job_id && !TERMINAL.has(j.status));
-  for (const job of jobs) {
-    const res = await api.getJob(gatewayUrl, job.job_id);
-    if (res.status === 404) {
-      await updateJob(job.key, { status: "FAILED", error: { code: "JOB_NOT_FOUND" } });
-      continue;
-    }
-    if (!res.ok || !res.data) continue;
-    const before = job.status;
-    const next = await updateJob(job.key, { ...res.data, title: res.data.video_title || job.title });
-    if (next && !TERMINAL.has(before) && TERMINAL.has(next.status)) notifyFinished(next);
-  }
+  for (const job of jobs) await refreshJob(job, gatewayUrl);
   await refreshBadge();
   const stillActive = (await getJobs()).some((j) => j.job_id && !TERMINAL.has(j.status));
   if (!stillActive) await chrome.alarms.clear(POLL_ALARM);
@@ -198,7 +204,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case "SUBMIT_JOB":
         return submitJob(msg);
       case "RETRY_JOB":
-        return retryJob(msg.key);
+        return retryJob(msg.key, !!msg.fresh);
+      case "REFRESH_JOB": {
+        // The player button asks every few seconds while its video's job is running.
+        const job = (await getJobs()).find((j) => j.key === msg.key);
+        const { gatewayUrl } = await getSettings();
+        return { ok: true, job: await refreshJob(job, gatewayUrl) };
+      }
       case "CONNECT_NOTION":
         return { ok: true, ...(await connectNotion()) };
       case "SAVE_INTERNAL_TOKEN": {

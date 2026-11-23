@@ -21,7 +21,21 @@
 .ytp-button.vn-btn:hover { filter: brightness(1.12); transform: translateY(-1px); }
 .ytp-button.vn-btn:active { transform: translateY(0); }
 .ytp-button.vn-btn:disabled { opacity: 0.6; cursor: progress; }
-.ytp-button.vn-btn.vn-btn--done { background: linear-gradient(135deg, #12b886, #0ca678); }
+.ytp-button.vn-btn span { font-variant-numeric: tabular-nums; }
+
+/* Live job state (both the toolbar button and the floating fallback). */
+.vn-btn--busy, .vn-float-btn.vn-btn--busy { background: linear-gradient(135deg, rgba(40, 40, 56, 0.92), rgba(60, 56, 92, 0.92)) !important; }
+.vn-btn--ready, .vn-float-btn.vn-btn--ready { background: linear-gradient(135deg, #12b886, #0ca678) !important; }
+.vn-btn--ready.vn-btn--warn, .vn-float-btn.vn-btn--ready.vn-btn--warn { background: linear-gradient(135deg, #f59f00, #e8590c) !important; }
+.vn-btn--failed, .vn-float-btn.vn-btn--failed { background: linear-gradient(135deg, #e03e5e, #c2255c) !important; }
+
+.vn-ring { flex: none; transform: rotate(-90deg); }
+.vn-ring circle { fill: none; stroke-width: 2.4; }
+.vn-ring__track { stroke: rgba(255, 255, 255, 0.25); }
+.vn-ring__bar { stroke: #b6adff; stroke-linecap: round; transition: stroke-dashoffset 0.6s ease; }
+.vn-btn--indeterminate .vn-ring { animation: vn-spin 1s linear infinite; }
+.vn-btn--indeterminate .vn-ring__bar { stroke-dasharray: 12 32 !important; stroke-dashoffset: 0 !important; }
+@keyframes vn-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
 
 /* Fallback when the player toolbar can't be found. */
 .vn-float-btn {
@@ -43,7 +57,6 @@
   transition: transform 0.12s ease, filter 0.12s ease;
 }
 .vn-float-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
-.vn-float-btn.vn-btn--done { background: linear-gradient(135deg, #12b886, #0ca678); }
 
 .vn-toast {
   position: fixed;

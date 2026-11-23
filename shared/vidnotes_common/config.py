@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     frame_max_width: int = 1280
     frame_jpeg_quality: int = 80
     yt_proxy_url: str = ""
+    # Reuse transcript / summary / frames from an earlier job on the same video with the
+    # same settings, so a re-submit only has to publish. Per job: options.fresh=true skips it.
+    result_cache: bool = True
 
     # --- retries ---
     max_attempts: int = 5

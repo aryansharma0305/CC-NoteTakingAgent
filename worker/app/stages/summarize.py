@@ -26,6 +26,7 @@ from vidnotes_common.status import Stage, stage_progress
 
 from .. import repo
 from ..context import WorkerContext
+from ..llm import prompts as prompt_texts
 from ..llm.chunking import (
     chunk_segments,
     clean_heading,
@@ -176,6 +177,19 @@ def apply_overview(merged: Synthesis, ov: Overview) -> Synthesis:
     return merged.model_copy(update=upd)
 
 
+def synthesis_cache_key(*, model_id: str, segments: list[dict], frames: int, words: int, study: bool,
+                        language: str | None, min_frames: int, chunk_tokens: int) -> str:
+    """Everything that changes the notes: model, transcript, the job's note style, the
+    relevant server settings and the prompt text itself (editing a prompt invalidates the cache)."""
+    h = hashlib.sha256()
+    for part in (model_id, prompt_texts.SYSTEM_PROMPT, prompt_texts.OVERVIEW_PROMPT,
+                 json.dumps([frames, words, study, language or "", min_frames, chunk_tokens]),
+                 json.dumps([[x.get("start"), x.get("text")] for x in segments], ensure_ascii=False)):
+        h.update(part.encode())
+        h.update(b"\0")
+    return "syn1:" + h.hexdigest()[:24]
+
+
 async def run(ctx: WorkerContext, job, msg) -> StageResult:
     s = ctx.settings
     opts: JobOptions = getattr(msg, "options", None) or JobOptions()
@@ -191,6 +205,21 @@ async def run(ctx: WorkerContext, job, msg) -> StageResult:
     study = s.study_aids if opts.study_aids is None else opts.study_aids
     steps = n + (1 if study else 0)
     model_id = f"{s.llm_provider}:{s.llm_model}"
+    cache_key = synthesis_cache_key(model_id=model_id, segments=segments, frames=frames, words=words, study=study,
+                                    language=opts.language, min_frames=min(s.min_frames, frames),
+                                    chunk_tokens=s.chunk_tokens)
+
+    # Same video + same settings already summarized by an earlier job: reuse it, no LLM calls.
+    if s.result_cache and not opts.fresh:
+        hit = await repo.find_cached_artifact(ctx.engine, video_id=job.video_id, stage="synthesis",
+                                              cache_key=cache_key, exclude_job=job.id)
+        if hit:
+            src_id, cached, _ = hit
+            data = {k: v for k, v in cached.items() if k != "llm_trace"}
+            data.update(cached_from=str(src_id), options=opts.model_dump(),
+                        llm_trace={"cached_from": str(src_id), "calls": [], "resumed_chunks": [],
+                                   "chunk_ranges": (cached.get("llm_trace") or {}).get("chunk_ranges", [])})
+            return StageResult(artifact=data, note={"cached_from": str(src_id)})
 
     partials: list[Synthesis] = []
     calls: list[dict] = []
@@ -248,6 +277,7 @@ async def run(ctx: WorkerContext, job, msg) -> StageResult:
     data["chunks"] = n
     data["model"] = model_id
     data["options"] = opts.model_dump()
+    data["cache_key"] = cache_key
     # Debug only (shown at /debug): exactly what the LLM saw and said, before merging.
     data["llm_trace"] = {
         "system_prompt": sysp,

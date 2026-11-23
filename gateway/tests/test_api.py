@@ -172,3 +172,70 @@ def test_valid_job_options_reach_the_queue_message(client, monkeypatch):
     assert r.status_code == 202
     o = sent["msg"].options
     assert (o.detail, o.max_frames, o.language) == ("brief", 0, "German")
+
+
+# ---- metrics ------------------------------------------------------------------------------
+
+def test_dashboard_page_is_served_and_metrics_need_the_token(client):
+    r = client.get("/dashboard")
+    assert r.status_code == 200 and "Video Notes" in r.text and "/admin/metrics" in r.text
+    assert client.get("/admin/metrics").status_code == 401
+
+
+def test_metrics_compute_latency_retries_recovery_llm_and_cache():
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace as NS
+
+    from app.routes_metrics import compute, summarize
+
+    now = datetime(2026, 11, 23, 12, 30, tzinfo=UTC)
+    t0 = now - timedelta(minutes=50)
+    a, b, c = _uuid.uuid4(), _uuid.uuid4(), _uuid.uuid4()
+    rows = [
+        NS(id=a, status="COMPLETED", created_at=t0, updated_at=t0 + timedelta(seconds=300), duration_sec=1100,
+           video_title="Long lecture", error=None),
+        NS(id=b, status="DEAD_LETTERED", created_at=t0, updated_at=t0 + timedelta(seconds=80), duration_sec=200,
+           video_title="Private", error={"code": "RETRIES_EXHAUSTED", "last_error": {"code": "VIDEO_UNAVAILABLE"}}),
+        NS(id=c, status="COMPLETED", created_at=t0, updated_at=t0 + timedelta(seconds=20), duration_sec=1100,
+           video_title="Long lecture again", error=None),
+    ]
+    at = lambda s: t0 + timedelta(seconds=s)  # noqa: E731
+    ev = [
+        NS(id=1, job_id=a, at=at(2), worker_id="w1", detail={"event": "claimed", "stage": "TRANSCRIBE"}),
+        NS(id=2, job_id=a, at=at(4), worker_id="w1",
+           detail={"event": "stage_done", "stage": "TRANSCRIBE", "seconds": 2}),
+        NS(id=3, job_id=a, at=at(14), worker_id="w2",
+           detail={"event": "claimed", "stage": "SUMMARIZE", "deferred": True}),
+        NS(id=4, job_id=a, at=at(100), worker_id="w3", detail={"event": "claimed", "stage": "SUMMARIZE",
+                                                              "recovered_from": "w2", "recovery_sec": 3.2}),
+        NS(id=5, job_id=a, at=at(250), worker_id="w3", detail={"event": "stage_done", "stage": "SUMMARIZE",
+                                                              "seconds": 150}),
+        NS(id=6, job_id=b, at=at(1), worker_id="w1", detail={"event": "retry_scheduled",
+                                                            "error": {"code": "VIDEO_UNAVAILABLE"}}),
+        NS(id=7, job_id=b, at=at(2), worker_id="w1", detail={"event": "retry_scheduled",
+                                                            "error": {"code": "RATE_LIMITED"}}),
+        NS(id=8, job_id=c, at=at(1), worker_id="w1", detail={"event": "stage_done", "stage": "SUMMARIZE",
+                                                            "seconds": 0.1, "cached_from": str(a)}),
+    ]
+    syn = [NS(job_id=a, data={"model": "ollama:qwen", "llm_trace": {"calls": [
+        {"part": 1, "resumed_from_checkpoint": True},
+        {"part": 2, "seconds": 50, "queued_sec": 4, "parse_error": None, "provider_stats": {"tokens_per_sec": 12.0}},
+        {"part": "overview", "seconds": 40, "queued_sec": 0, "parse_error": "bad", "provider_stats": {}},
+    ]}}), NS(job_id=c, data={"cached_from": str(a), "llm_trace": {"calls": []}})]
+
+    m = compute(rows, ev, syn, since=now - timedelta(hours=2), hours=2, now=now)
+    assert m["jobs"]["total"] == 3 and sum(h["submitted"] for h in m["jobs"]["per_hour"]) == 3
+    assert m["latency"]["by_video_length"]["15–20 min"]["count"] == 2
+    assert m["latency"]["handoff_wait_sec"]["max"] == 10.0  # stage_done@4 -> next claim@14 (a lock wait)
+    assert m["latency"]["stage_sec"]["SUMMARIZE"]["count"] == 2
+    assert m["reliability"]["retries_total"] == 2 and m["reliability"]["llm_429s"] == 1
+    assert m["reliability"]["lock_deferrals"] == 1 and m["reliability"]["dead_lettered"] == 1
+    assert m["reliability"]["failures_by_code"] == {"DEAD_LETTERED:VIDEO_UNAVAILABLE": 1}
+    assert m["recovery"]["count"] == 1 and m["recovery"]["events"][0]["from_worker"] == "w2"
+    assert m["recovery"]["recovery_sec"]["avg"] == 3.2
+    assert m["llm"]["calls"] == 2 and m["llm"]["parse_errors"] == 1 and m["llm"]["resumed_from_checkpoint"] == 1
+    assert m["llm"]["tokens_per_sec"]["p50"] == 12.0
+    assert m["cache"] == {"hits_by_stage": {"SUMMARIZE": 1}, "hits": 1}
+    assert summarize([]) == {"count": 0, "avg": None, "p50": None, "p95": None, "max": None}
+    assert summarize([1, 2, 3, 4, 100])["p95"] == 100

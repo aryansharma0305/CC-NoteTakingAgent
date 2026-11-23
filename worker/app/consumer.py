@@ -39,7 +39,7 @@ async def process(ctx: WorkerContext, message: AbstractIncomingMessage) -> None:
     if hb:
         await hb.busy(str(msg.job_id), str(msg.stage))
     try:
-        await dispatcher.handle(ctx, msg, headers)
+        await dispatcher.handle(ctx, msg, headers, redelivered=bool(message.redelivered))
     except Exception as e:  # noqa: BLE001 - infra failure (DB/broker down): let RabbitMQ redeliver
         log.exception("handler_failed_requeue", job_id=str(msg.job_id), stage=str(msg.stage),
                       redelivered=message.redelivered)

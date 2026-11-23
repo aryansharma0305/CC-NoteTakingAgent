@@ -191,14 +191,21 @@ def fake_repo(monkeypatch):
     async def save(ctx, job, name, key, data):
         store[name] = {"key": key, "data": data}
 
+    async def find_cached_artifact(_engine, *, video_id, stage, cache_key, exclude_job):
+        for (vid, st, key, jid), data in store.get("_cache", {}).items():
+            if (vid, st, key) == (video_id, stage, cache_key) and jid != exclude_job:
+                return jid, data, SimpleNamespace(video_title="Cached", duration_sec=420)
+        return None
+
     monkeypatch.setattr(summarize.repo, "get_artifact", get_artifact)
+    monkeypatch.setattr(summarize.repo, "find_cached_artifact", find_cached_artifact)
     monkeypatch.setattr(summarize.repo, "update_job", update_job)
     monkeypatch.setattr(summarize, "_save_checkpoint", save)
     return store
 
 
 def _job():
-    return SimpleNamespace(id=uuid.uuid4(), video_title="Video", duration_sec=420)
+    return SimpleNamespace(id=uuid.uuid4(), video_id="vid12345678", video_title="Video", duration_sec=420)
 
 
 def _msg(**opts):
@@ -344,3 +351,55 @@ def test_concurrency_gate_is_fair_and_frees_crashed_slots():
             await r.aclose()
 
     asyncio.run(go())
+
+
+# ---- result cache -------------------------------------------------------------------------
+
+def test_same_video_and_settings_reuse_the_summary_without_llm_calls(fake_repo):
+    first = _job()
+    res = asyncio.run(summarize.run(make_ctx(ScriptedLLM([chunk_reply(0), OVERVIEW_REPLY]), fake_repo,
+                                             chunk_tokens=100000), first, _msg()))
+    key = res.artifact["cache_key"]
+    fake_repo["_cache"] = {("vid12345678", "synthesis", key, first.id): res.artifact}
+    for k in [k for k in fake_repo if k.startswith("synth_")]:
+        fake_repo.pop(k)  # no per-job checkpoints: only the cross-job cache can help
+
+    llm = ScriptedLLM([])  # any model call would fail the test
+    hit = asyncio.run(summarize.run(make_ctx(llm, fake_repo, chunk_tokens=100000), _job(), _msg()))
+    assert llm.calls == []
+    assert hit.artifact["cached_from"] == str(first.id) and hit.note == {"cached_from": str(first.id)}
+    assert hit.artifact["sections"] == res.artifact["sections"]
+    assert hit.artifact["key_takeaways"] == ["one", "two", "three"]
+
+
+def test_different_settings_or_fresh_bypass_the_cache(fake_repo):
+    first = _job()
+    res = asyncio.run(summarize.run(make_ctx(ScriptedLLM([chunk_reply(0), OVERVIEW_REPLY]), fake_repo,
+                                             chunk_tokens=100000), first, _msg()))
+    fake_repo["_cache"] = {("vid12345678", "synthesis", res.artifact["cache_key"], first.id): res.artifact}
+    for opts in ({"detail": "brief"}, {"fresh": True}):
+        for k in [k for k in fake_repo if k.startswith("synth_")]:
+            fake_repo.pop(k)
+        llm = ScriptedLLM([chunk_reply(0), OVERVIEW_REPLY])
+        out = asyncio.run(summarize.run(make_ctx(llm, fake_repo, chunk_tokens=100000), _job(), _msg(**opts)))
+        assert "cached_from" not in out.artifact and len(llm.calls) == 2, opts
+
+
+def test_cache_off_by_setting(fake_repo):
+    first = _job()
+    res = asyncio.run(summarize.run(make_ctx(ScriptedLLM([chunk_reply(0), OVERVIEW_REPLY]), fake_repo,
+                                             chunk_tokens=100000), first, _msg()))
+    fake_repo["_cache"] = {("vid12345678", "synthesis", res.artifact["cache_key"], first.id): res.artifact}
+    for k in [k for k in fake_repo if k.startswith("synth_")]:
+        fake_repo.pop(k)
+    llm = ScriptedLLM([chunk_reply(0), OVERVIEW_REPLY])
+    out = asyncio.run(summarize.run(make_ctx(llm, fake_repo, chunk_tokens=100000, result_cache=False), _job(), _msg()))
+    assert "cached_from" not in out.artifact and len(llm.calls) == 2
+
+
+def test_cache_key_changes_with_prompt_text(monkeypatch):
+    kw = dict(model_id="m", segments=[{"start": 0, "text": "a"}], frames=3, words=600, study=True, language=None,
+              min_frames=0, chunk_tokens=3500)
+    k1 = summarize.synthesis_cache_key(**kw)
+    monkeypatch.setattr(summarize.prompt_texts, "SYSTEM_PROMPT", "edited prompt")
+    assert summarize.synthesis_cache_key(**kw) != k1

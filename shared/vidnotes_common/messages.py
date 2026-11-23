@@ -46,6 +46,7 @@ class JobOptions(BaseModel):
     study_aids: bool | None = None  # key takeaways, glossary, review questions
     include_transcript: bool | None = None  # collapsible full transcript on the page
     language: str | None = Field(default=None, max_length=40)  # None = the video's language
+    fresh: bool = False  # ignore cached results from earlier jobs on this video
 
     @field_validator("language", mode="before")
     @classmethod
