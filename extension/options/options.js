@@ -1,5 +1,5 @@
 import * as api from "../lib/api.js";
-import { getAuth, getSettings, saveSettings } from "../lib/storage.js";
+import { DEFAULT_NOTE_OPTIONS, getAuth, getSettings, saveSettings } from "../lib/storage.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -33,7 +33,59 @@ async function refresh() {
     : "Not connected.";
   $("disconnect").hidden = !auth;
   $("connect").textContent = auth ? "Reconnect Notion" : "Connect Notion";
+  const chip = $("auth-chip");
+  chip.textContent = auth ? auth.workspaceName || "Connected" : "Not connected";
+  chip.className = `chip ${auth ? "ok" : ""}`;
+  renderStyle(settings.noteOptions);
 }
+
+// ---- note style ----
+function renderStyle(o) {
+  for (const r of document.querySelectorAll('input[name="detail"]')) r.checked = r.value === (o.detail || "standard");
+  const serverDefault = o.max_frames === null || o.max_frames === undefined || o.max_frames === "";
+  $("frames-default").checked = serverDefault;
+  $("frames").disabled = serverDefault;
+  $("frames").value = serverDefault ? 5 : o.max_frames;
+  updateFramesLabel();
+  $("study").checked = o.study_aids !== false;
+  $("transcript").checked = o.include_transcript !== false;
+  $("language").value = o.language || "";
+}
+
+function updateFramesLabel() {
+  const v = Number($("frames").value);
+  $("frames-val").textContent = $("frames-default").checked ? "server default" : v === 0 ? "text only" : String(v);
+}
+
+function readStyle() {
+  const checked = document.querySelector('input[name="detail"]:checked');
+  return {
+    detail: checked ? checked.value : "standard",
+    max_frames: $("frames-default").checked ? null : Number($("frames").value),
+    study_aids: $("study").checked,
+    include_transcript: $("transcript").checked,
+    language: $("language").value,
+  };
+}
+
+$("frames").addEventListener("input", updateFramesLabel);
+$("frames-default").addEventListener("change", () => {
+  $("frames").disabled = $("frames-default").checked;
+  updateFramesLabel();
+});
+$("save-style").addEventListener("click", async () => {
+  await saveSettings({ noteOptions: readStyle() });
+  flash("Note style saved. New jobs will use it.");
+});
+$("reset-style").addEventListener("click", async () => {
+  await saveSettings({ noteOptions: { ...DEFAULT_NOTE_OPTIONS } });
+  renderStyle(DEFAULT_NOTE_OPTIONS);
+  flash("Note style reset to defaults.");
+});
+$("shortcuts").addEventListener("click", (e) => {
+  e.preventDefault();
+  chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
+});
 
 $("save-gateway").addEventListener("click", async () => {
   const url = $("gateway").value.trim() || "http://localhost:8000";
@@ -58,9 +110,13 @@ $("test").addEventListener("click", async () => {
   list.replaceChildren();
   list.hidden = false;
   const r = await api.getHealth(gatewayUrl);
+  const chip = $("server-state");
+  const allOk = r.ok && r.data;
+  chip.textContent = allOk ? "Online" : r.network ? "Unreachable" : "Degraded";
+  chip.className = `chip ${allOk ? "ok" : "bad"}`;
   if (r.network || !r.data) {
     const li = document.createElement("li");
-    li.className = "bad";
+    li.className = "bad wide";
     li.textContent = `Can't reach ${gatewayUrl}. Is the server running (docker compose up)?`;
     list.appendChild(li);
     return;
@@ -114,3 +170,4 @@ $("save-parent").addEventListener("click", async () => {
 });
 
 refresh();
+$("test").click(); // show server status right away

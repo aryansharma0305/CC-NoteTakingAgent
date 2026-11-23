@@ -128,3 +128,47 @@ def test_debug_frame_rejects_keys_outside_jobs_prefix(client):
     for key in ("secrets/x.jpg", "jobs/../etc/passwd"):
         r = client.get("/admin/debug/frame", params={"key": key}, headers=h)
         assert r.status_code == 400
+
+
+def test_invalid_job_options_are_400_before_any_work(client):
+    r = client.post("/jobs", json={"youtube_url": "https://youtu.be/dQw4w9WgXcQ", "notion_token": "t",
+                                   "options": {"detail": "everything", "max_frames": 50}})
+    assert r.status_code == 400
+    err = r.json()["error"]
+    assert err["code"] == "INVALID_REQUEST" and "options" in err["message"]
+
+
+def test_valid_job_options_reach_the_queue_message(client, monkeypatch):
+    sent = {}
+
+    class Pub:
+        async def publish(self, msg, headers=None):
+            sent["msg"] = msg
+
+    class Conn:
+        async def execute(self, *a, **k):
+            return None
+
+    class Begin:
+        async def __aenter__(self):
+            return Conn()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class Engine:
+        def begin(self):
+            return Begin()
+
+    async def no_meta(video_id, settings, http):
+        return None
+
+    monkeypatch.setattr(youtube_meta, "lookup", no_meta)
+    st = client.app.state.vn
+    st.publisher, st.engine = Pub(), Engine()
+    st.cipher = type("C", (), {"encrypt": staticmethod(lambda t: "enc:" + t)})()
+    r = client.post("/jobs", json={"youtube_url": "https://youtu.be/dQw4w9WgXcQ", "notion_token": "t",
+                                   "options": {"detail": "brief", "max_frames": 0, "language": "German"}})
+    assert r.status_code == 202
+    o = sent["msg"].options
+    assert (o.detail, o.max_frames, o.language) == ("brief", 0, "German")

@@ -41,11 +41,13 @@ def test_layout_callout_tldr_sections_and_footer():
     types = [b["type"] for b in blocks]
     assert types[0] == "callout"
     assert JOB in "".join(t["text"]["content"] for t in blocks[0]["callout"]["rich_text"])
-    assert types[1:3] == ["heading_2", "paragraph"]
+    assert types[1] == "callout" and blocks[1]["callout"]["icon"]["emoji"] == "💡"  # summary
+    assert "A short summary." in "".join(t["text"]["content"] for t in blocks[1]["callout"]["rich_text"])
     assert types.count("bulleted_list_item") == 3
     assert types[-2:] == ["divider", "paragraph"]
-    heading = blocks[3]["heading_2"]["rich_text"]
+    heading = next(b for b in blocks if b["type"] == "heading_2")["heading_2"]["rich_text"]
     assert heading[0]["text"]["link"]["url"].endswith("&t=0s")
+    assert "Intro" in heading[-1]["text"]["content"]
 
 
 def test_frames_are_placed_under_their_section_in_time_order():
@@ -98,5 +100,82 @@ def test_batches_of_at_most_100():
 def test_long_text_is_clipped_and_title_has_marker():
     syn = {**SYN, "tldr": "x" * 5000}
     blocks = build_blocks(job_id=JOB, video_id="v", video_title=None, duration_sec=None, synthesis=syn, frames=[])
-    assert len(blocks[2]["paragraph"]["rich_text"][0]["text"]["content"]) <= 2000
+    summary = blocks[1]["callout"]["rich_text"]
+    assert all(len(t["text"]["content"]) <= 2000 for t in summary)
+    assert sum(len(t["text"]["content"]) for t in summary) >= 5000  # split, not truncated
     assert page_title("T", JOB).endswith("· #12345678")
+
+
+# ---- richer formatting ------------------------------------------------------------------
+
+from notion_publisher.blocks import plain, rich, transcript_paragraphs  # noqa: E402
+
+
+def _ann(item):
+    return {k for k, v in (item.get("annotations") or {}).items() if v is True}
+
+
+def test_inline_markdown_becomes_notion_annotations():
+    items = rich("**Gradient descent**: step *downhill* using `lr=0.1`, not snake_case or 2*3*4.")
+    assert plain(items) == "Gradient descent: step downhill using lr=0.1, not snake_case or 2*3*4."
+    by_text = {i["text"]["content"]: _ann(i) for i in items}
+    assert by_text["Gradient descent"] == {"bold"}
+    assert by_text["downhill"] == {"italic"}
+    assert by_text["lr=0.1"] == {"code"}
+
+
+def test_rich_splits_long_text_under_notion_limits():
+    items = rich("y" * 4500)
+    assert [len(i["text"]["content"]) for i in items] == [1900, 1900, 700]
+
+
+SYN_FULL = {
+    **SYN,
+    "key_takeaways": ["First **big** idea", "Second idea"],
+    "glossary": [{"term": "Neuron", "definition": "Holds a number."}, {"term": "", "definition": "dropped"}],
+    "review_questions": [{"question": "Why sigmoid?", "answer": "To squash values."}],
+}
+SEGS = [{"start": 10 * i, "end": 10 * i + 10, "text": f"words {i}"} for i in range(30)]  # 5 minutes
+
+
+def test_study_aids_transcript_and_toc_layout():
+    blocks = build_blocks(job_id=JOB, video_id="vid", video_title="NN", duration_sec=300, synthesis=SYN_FULL,
+                          frames=[frame(30)], transcript=SEGS, model="qwen2.5:3b", generated_on="1 Jan 2026")
+    plain_blocks = [b for b in blocks if not isinstance(b, ImageSlot)]
+    types = [b["type"] for b in plain_blocks]
+    assert types.count("numbered_list_item") == 2
+    header = plain(blocks[0]["callout"]["rich_text"])
+    assert "qwen2.5:3b" in header and "1 Jan 2026" in header and "1 key frame" in header
+
+    table = next(b for b in plain_blocks if b["type"] == "table")["table"]
+    assert table["table_width"] == 2 and table["has_column_header"]
+    assert len(table["children"]) == 2  # header + 1 valid term (empty term dropped)
+
+    toggle = next(b for b in plain_blocks if b["type"] == "toggle")["toggle"]
+    assert "Why sigmoid?" in plain(toggle["rich_text"])
+    assert plain(toggle["children"][0]["paragraph"]["rich_text"]) == "To squash values."
+
+    tr = next(b for b in plain_blocks if b["type"] == "heading_3")["heading_3"]
+    assert tr["is_toggleable"] and len(tr["children"]) == 5  # one paragraph per minute
+    first = tr["children"][0]["paragraph"]["rich_text"]
+    assert first[0]["text"]["link"]["url"].endswith("&t=0s") and "words 0" in plain(first)
+
+
+def test_short_page_has_no_toc_and_no_empty_extras():
+    blocks = build_blocks(job_id=JOB, video_id="v", video_title="NN", duration_sec=60, synthesis=SYN, frames=[])
+    types = [b["type"] for b in blocks]
+    assert "table_of_contents" not in types and "table" not in types and "toggle" not in types
+
+
+def test_frame_caption_rich_keeps_constraint_b_prefix_and_links_the_moment():
+    slot = next(b for b in build([frame(461, caption="Weights grid", reason="Shows **signs**")])
+                if isinstance(b, ImageSlot))
+    slot.upload_id = "up1"
+    cap = slot.to_block()["image"]["caption"]
+    assert plain(cap).startswith("[7:41] Weights grid — Shows signs")
+    assert cap[0]["text"]["link"]["url"].endswith("&t=461s")
+
+
+def test_transcript_paragraphs_stay_under_100_children():
+    segs = [{"start": 5 * i, "end": 5 * i + 5, "text": "x"} for i in range(3000)]  # ~4 h
+    assert len(transcript_paragraphs(segs, "v")) <= 100

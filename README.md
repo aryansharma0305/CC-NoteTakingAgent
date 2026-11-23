@@ -59,6 +59,20 @@ docker kill -s KILL <worker-container>     # its in-flight stage is redelivered 
 5. Open any YouTube video. A **Take Notes** button appears in the player toolbar (bottom-right
    controls). Click it, then click the extension icon to watch progress.
 
+Other ways to start a job (all go through the same background script):
+
+| Where | How |
+|---|---|
+| Popup | On a video tab the popup shows a **This tab** card: pick Brief / Standard / Detailed and click *Take notes on this video* |
+| Keyboard | <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> on a video tab (change it at `chrome://extensions/shortcuts`) |
+| Right-click | Any YouTube link (search results, playlists, sidebars) → **Take notes on this video** |
+
+Settings → **Note style** sets the defaults sent with every job: detail level, frames per page
+(0–12 or the server default), study guide on/off, collapsible transcript on/off, and the notes
+language (e.g. English notes for a Spanish video). The popup also shows server health, elapsed time
+per job, *Try again* for failed jobs, *Copy link*, and *Clear finished*. Clicking Take Notes twice
+on the same video does not create a second job while the first is running.
+
 ## 3. Connect Notion
 
 Either option works. The extension stores the token in `chrome.storage.local` and sends it with each
@@ -102,18 +116,23 @@ hostnames; the `.env` values are for running services on the host.
 
 | Variable | Default / example | Used by | Purpose |
 |---|---|---|---|
-| `LLM_PROVIDER` * | `anthropic` | worker | `anthropic`, `openai` (any OpenAI-compatible API), `gemini`, `fake` (offline test double) |
+| `LLM_PROVIDER` * | `anthropic` | worker | `anthropic`, `openai` (any OpenAI-compatible API), `ollama` (local, native API; see §4.1), `gemini`, `fake` (offline test double) |
 | `LLM_API_KEY` * | | worker | Provider API key |
 | `LLM_MODEL` * | `claude-haiku-5-5` | worker | Model name for the provider |
 | `LLM_BASE_URL` | | worker | Override endpoint for OpenAI-compatible providers |
 | `LLM_RPM` * | `10` | worker | **Configured rate limit**: LLM requests/min across *all* workers (set ~80% of your real limit) |
 | `LLM_TPM` | `200000` | worker | LLM tokens/min across all workers (input estimate + max output) |
 | `LLM_MAX_OUTPUT_TOKENS` | `16000` | worker | Per-call output cap |
+| `LLM_TIMEOUT_SEC` / `LLM_TEMPERATURE` | `120` / `0.2` | worker | Per-call timeout (raise to ~600 for a CPU model) / sampling temperature |
+| `LLM_CONCURRENCY` | `0` | worker | Max LLM calls in flight across **all** workers (0 = no cap). Set `1` for a single local model |
+| `LLM_NUM_CTX` / `LLM_KEEP_ALIVE` | `8192` / `30m` | worker | Ollama only: context window per request / how long the model stays loaded |
 | `NOTION_CLIENT_ID` * / `NOTION_CLIENT_SECRET` * | | gateway | Public integration OAuth credentials |
 | `NOTION_REDIRECT_URI` | `https://odkinkapbnndcekhonhigbeaoclbecfj.chromiumapp.org/` | gateway | Must match the integration settings |
 | `NOTION_VERSION` | `2022-06-28` | worker | Pinned Notion API version |
 | `NOTION_RPS` | `2.5` | worker | Notion calls/sec per token, across all workers |
 | `DEFAULT_NOTION_PARENT_ID` | blank | worker | Fallback destination (see above) |
+| `STUDY_AIDS` / `NOTION_INCLUDE_TRANSCRIPT` | `true` / `true` | worker | Default page extras (key takeaways, glossary, review questions / collapsible transcript); per-job override from the extension |
+| `NOTION_API_URL` | `https://api.notion.com/v1` | worker | Only for offline runs against `ops/mock_notion.py` (set from the shell; see §4.2) |
 | `RABBITMQ_URL` * | `amqp://vn:vn@rabbitmq:5672/` | gateway, worker | **Broker connection string** |
 | `DATABASE_URL` | `postgresql+asyncpg://vn:vn@postgres:5432/vn` | gateway, worker | Job state store |
 | `REDIS_URL` | `redis://redis:6379/0` | gateway, worker | Shared rate-limit buckets |
@@ -134,11 +153,74 @@ hostnames; the `.env` values are for running services on the host.
 | `FAULT_INJECT_429` | blank | worker | Demo only, e.g. `llm:0.3,notion:0.2,youtube:0.1` |
 | `FAULT_INJECT_FRAME_FAIL` | blank | worker | Demo only, probability 0–1 that a frame capture fails |
 
+### 4.1 Running with a local model (Ollama)
+
+```bash
+ollama pull qwen2.5:3b          # ~2 GB; qwen2.5:7b or llama3.1:8b give better notes if RAM allows
+# .env (see the "Local model profile" block in .env.example)
+LLM_PROVIDER=ollama
+LLM_MODEL=qwen2.5:3b
+LLM_BASE_URL=http://host.docker.internal:11434   # Ollama must listen on 0.0.0.0 (OLLAMA_HOST=0.0.0.0)
+LLM_TIMEOUT_SEC=600
+LLM_MAX_OUTPUT_TOKENS=3000
+LLM_CONCURRENCY=1
+LLM_NUM_CTX=8192
+CHUNK_TOKENS=3500
+```
+
+What the `ollama` provider does differently from pointing `openai` at Ollama's `/v1`:
+
+* **Grammar-constrained JSON.** The JSON Schema is sent as Ollama's `format`, so even a 3B model can
+  only produce output of the right shape (no repair round-trips).
+* **Explicit context size.** `num_ctx` is set per request. The `/v1` endpoint uses the server default and
+  silently truncates long prompts, dropping the instructions.
+* **A global queue for the model.** `LLM_CONCURRENCY=1` makes every worker take a slot (a fair Redis
+  semaphore with a 15 s lease that a live worker renews) before calling the model. Two workers don't
+  fight over one CPU, the popup shows "Waiting for the AI model (1 call ahead)", and a killed
+  worker's slot frees itself within 15 s.
+* **Prompts written for small models.** Timestamps are copied as `m:ss` strings and parsed in code (a
+  3B model often turns `[14:10]` into `1450`), headings and bullets are cleaned up, timestamps are snapped
+  to real transcript lines inside the chunk, frames are attached to sections by time, and sections that
+  the chunk overlap repeats under a new name are merged.
+* **Token speed in the trace.** Prompt/output tokens and tokens/s for every call appear in `/debug`.
+
+Measured on a 20-core CPU without a GPU (qwen2.5:3b, ~12 tokens/s): a 19-minute lecture takes about
+4–5 minutes end to end, almost all of it in SUMMARIZING (2 chunk calls plus the study-guide call).
+
+### 4.2 Offline preview with a mock Notion API
+
+`ops/mock_notion.py` is a stdlib-only stand-in for the Notion endpoints the publisher uses. It
+enforces the request limits real Notion rejects (2000-char text items, 100 children, nesting depth,
+uploaded-file references) and renders each page as HTML with the captured frames:
+
+```bash
+python3 ops/mock_notion.py &                                   # :8765
+NOTION_API_URL=http://host.docker.internal:8765/v1 docker compose up -d worker
+NOTION_TOKEN=anything ops/kill_worker_mid_frames.sh https://www.youtube.com/watch?v=aircAruvnKk SUMMARIZING
+open http://localhost:8765/preview                             # rendered pages + {"pages_created": N}
+docker compose up -d worker                                    # back to real Notion
+```
+
+### 4.3 What a published page looks like
+
+```
+🎬 Video title (link) · ⏱ 18:40 · 7 sections · 5 key frames · Generated 23 Nov 2026 with qwen2.5:3b
+   table of contents
+💡 Summary
+🎯 Key takeaways              1. … 2. … (numbered)
+▶ 0:04  Section heading       linked to that moment; bullets with **bold**/*italic*/`code` rendered natively
+   🖼 frame  "[10:02] what it shows — why it was flagged" (stamp links to the moment)
+…
+📖 Glossary                   2-column table
+🧠 Review questions           toggles: question → answer (works as flashcards)
+📜 Full transcript            collapsed, one timestamp-linked paragraph per minute
+```
+
 ## 5. REST API
 
 | Method + path | Success | Errors |
 |---|---|---|
-| `POST /jobs` `{youtube_url, notion_token, notion_parent_id?}` | **202**, `Location: /jobs/{id}`, `{job_id, status:"QUEUED", video_id}` | 400 `INVALID_URL` / `INVALID_REQUEST`, 401 `MISSING_NOTION_TOKEN`, 422 `VIDEO_TOO_LONG` / `LIVE_STREAM`, 503 `BROKER_UNAVAILABLE` |
+| `POST /jobs` `{youtube_url, notion_token, notion_parent_id?, options?}` | **202**, `Location: /jobs/{id}`, `{job_id, status:"QUEUED", video_id}` | 400 `INVALID_URL` / `INVALID_REQUEST`, 401 `MISSING_NOTION_TOKEN`, 422 `VIDEO_TOO_LONG` / `LIVE_STREAM`, 503 `BROKER_UNAVAILABLE` |
 | `GET /jobs/{id}` | 200 `{job_id, status, progress, video_title, duration_sec, warnings, error, result, waiting_until, retry_reason, attempt, max_attempts, …}` | 404 `JOB_NOT_FOUND` |
 | `GET /jobs/{id}/results` | 200 `{status, result:{notion_page_url, frames_requested, frames_published}, warnings}` | 409 `JOB_NOT_FINISHED` before a terminal state, 404 |
 | `GET /healthz` | 200 | 503 naming the failing dependency |
@@ -150,6 +232,14 @@ publishes a message: no pipeline work happens inside the request. `GET /jobs/{id
 `SELECT`. `FAILED` / `DEAD_LETTERED` jobs return 200 from `/results` with `result: null` and the error.
 
 Accepted URL forms: `watch?v=`, `youtu.be/`, `shorts/`, `embed/`, `live/`, or a bare 11-character id.
+
+`options` is optional; every field has a server default, and an invalid value returns 400
+`INVALID_REQUEST`:
+
+```json
+{"detail": "brief | standard | detailed", "max_frames": 0-12, "study_aids": true,
+ "include_transcript": true, "language": "German"}
+```
 
 ## 6. Demo runbook
 
@@ -163,7 +253,7 @@ with access to a page: `export NOTION_TOKEN=ntn_...` (and optionally `NOTION_PAR
 | 2 | Too long | Take Notes on a 35 min video | Immediate red "This video is 35 min; the limit is 20 min."; nothing queued |
 | 3 | Burst | `ops/burst_submit.sh` (list in `ops/videos.txt`), or click Take Notes on 6 videos | Independent cards drain; `vn.work` depth falls; "zero LLM 429s" |
 | 4 | 429 handling | `ops/force_429.sh <url> llm:0.6` then `ops/force_429.sh --off` | Amber "Rate-limited by the LLM provider — retrying in 10 s", then continues |
-| 5 | Worker crash | `ops/kill_worker_mid_frames.sh <url>` | SIGKILL during EXTRACTING_FRAMES; another worker re-claims within seconds; one Notion page |
+| 5 | Worker crash | `ops/kill_worker_mid_frames.sh <url> [SUMMARIZING\|EXTRACTING_FRAMES\|PUBLISHING]` | SIGKILL mid-stage; another worker re-claims within ~1 s (timeline shows "recovered from <worker>"); finished summary chunks are reused; one Notion page |
 | 6 | Partial frames | `FAULT_INJECT_FRAME_FAIL=0.5 docker compose up -d --no-deps worker` | Page with some frames; amber "Done, with warnings: 3 of 6 frames added…" |
 | 7 | DLQ | `ops/dlq_demo.sh <private-video-url>` then `--off` | 5 attempts in ~75 s → `DEAD_LETTERED`; message visible in `vn.dlq` |
 | 8 | Scaling | `docker compose up -d --scale worker=4` | New workers join; nothing else restarts |
@@ -189,7 +279,8 @@ compare-and-set updates. A retryable error does not change the status; it sets `
 
 | Crash point | On redelivery |
 |---|---|
-| During transcribe / summarize | Stage reruns; output is an upsert on `(job_id, stage)` |
+| During transcribe | Stage reruns; output is an upsert on `(job_id, stage)` |
+| During summarize | Every finished chunk (and the study-guide call) is checkpointed as `synth_part_<i>` keyed by a hash of model + prompts; the new worker reuses them and calls the model only for the rest |
 | During frame extraction | Frames already in S3 (`jobs/{id}/frame_{t}.jpg`) are reused |
 | After commit, before the next message is published | `dispatch_pending` flag → the next-stage message is re-published |
 | After publishing, before ack | A per-job Postgres advisory lock serializes workers; the stale message sees the job has moved on and is dropped |
@@ -250,6 +341,9 @@ pip install -e shared -r worker/requirements.txt -r gateway/requirements.txt ruf
 ops/run_tests.sh      # ruff + pytest for shared, notion_publisher, worker, gateway
 ```
 
+Set `REDIS_TEST_URL=redis://localhost:6390/15` (e.g. `docker run --rm -d -p 6390:6379 redis:7-alpine`) to
+also run the LLM-semaphore integration test.
+
 `LLM_PROVIDER=fake` runs the whole pipeline offline against a deterministic summarizer (it only
 rearranges transcript lines; never use it for grading).
 
@@ -261,4 +355,7 @@ rearranges transcript lines; never use it for grading).
 | No Take Notes button | Reload the YouTube tab after loading the extension; if the player layout changed, a floating button appears bottom-right instead |
 | "Notion sign-in isn't configured on the server" | Set `NOTION_CLIENT_ID` / `NOTION_CLIENT_SECRET`, or use an internal integration token |
 | "The Notion destination page wasn't found" | Share the page with the integration (`•••` → Connections) |
+| "Model 'x' is not installed in Ollama" | `ollama pull x` on the host |
+| "Local model server (Ollama) unreachable" | Ollama must listen on all interfaces: `OLLAMA_HOST=0.0.0.0` (systemd: `systemctl edit ollama`) |
+| "The local model took longer than N s" | Raise `LLM_TIMEOUT_SEC`, lower `CHUNK_TOKENS`, or use a smaller model |
 | Frames fail but text publishes | `docker compose exec worker yt-dlp -U` (YouTube changes often), or check `docker compose logs worker` |

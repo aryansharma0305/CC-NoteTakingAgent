@@ -88,6 +88,9 @@ def test_merge_without_min_frames_does_not_pad():
 
 def test_system_prompt_targets():
     from app.llm.prompts import system_prompt
-    p = system_prompt(5, 1000)
-    assert "exactly 5" in p and "about 1000 words" in p and "{" not in p.split("Return one JSON")[0]
-    assert "0 (an empty list)" in system_prompt(0, 50) and "about 150 words" in system_prompt(0, 50)
+    p = system_prompt(5, 1000, sections=3)
+    assert "exactly 5 moments" in p and "about 1000 words" in p and "about 3 sections" in p
+    assert "{frames}" not in p and "{language_rule}" not in p
+    assert "same language as the transcript" in p
+    assert "0 (return an empty list)" in system_prompt(0, 50) and "about 150 words" in system_prompt(0, 50)
+    assert "Write all text in German" in system_prompt(3, 500, language="German")

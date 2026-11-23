@@ -18,6 +18,8 @@ class LLMClient(ABC):
         self.settings = settings
         self.model = settings.llm_model
         self._fault = settings.fault_429_rates().get("llm", 0.0)
+        # Provider-reported usage/timing of the most recent call (for the debug trace).
+        self.last_stats: dict[str, Any] | None = None
 
     def maybe_inject_429(self) -> None:
         if self._fault and random.random() < self._fault:
@@ -41,6 +43,10 @@ def make_llm(settings: Settings) -> LLMClient:
         from .openai_compat import OpenAICompatLLM
 
         return OpenAICompatLLM(settings)
+    if provider in ("ollama", "local"):
+        from .ollama import OllamaLLM
+
+        return OllamaLLM(settings)
     if provider == "gemini":
         from .gemini import GeminiLLM
 

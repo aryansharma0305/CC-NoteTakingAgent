@@ -1,15 +1,25 @@
 // chrome.storage.local layout
-//   settings: { gatewayUrl, parentId }
+//   settings: { gatewayUrl, parentId, noteOptions: { detail, max_frames, study_aids, include_transcript, language } }
 //   auth:     { accessToken, workspaceName, workspaceIcon, templateId, mode: "oauth" | "internal" }
 //   jobIndex: [jobKey, ...]           newest first, max 20 -- written only by background.js
 //   job:<key>: { key, job_id, video_id, title, status, progress, ... }  written by background + popup
 
-export const DEFAULT_SETTINGS = { gatewayUrl: "http://localhost:8000", parentId: "" };
+// Per-job preferences sent as `options` with every POST /jobs. null = server default.
+export const DEFAULT_NOTE_OPTIONS = {
+  detail: "standard", // brief | standard | detailed
+  max_frames: null, // 0-12, null = server default (MAX_FRAMES)
+  study_aids: true, // key takeaways, glossary, review questions
+  include_transcript: true, // collapsible full transcript on the page
+  language: "", // "" = same language as the video
+};
+export const DEFAULT_SETTINGS = { gatewayUrl: "http://localhost:8000", parentId: "", noteOptions: DEFAULT_NOTE_OPTIONS };
 export const MAX_JOBS = 20;
 
 export async function getSettings() {
   const { settings } = await chrome.storage.local.get("settings");
-  return { ...DEFAULT_SETTINGS, ...(settings || {}) };
+  const merged = { ...DEFAULT_SETTINGS, ...(settings || {}) };
+  merged.noteOptions = { ...DEFAULT_NOTE_OPTIONS, ...((settings && settings.noteOptions) || {}) };
+  return merged;
 }
 
 export async function saveSettings(patch) {
@@ -58,6 +68,25 @@ export async function updateJob(key, patch) {
   const next = { ...data[k], ...patch };
   await chrome.storage.local.set({ [k]: next });
   return next;
+}
+
+// The options object for POST /jobs: drop "server default" values.
+export function jobOptionsPayload(noteOptions) {
+  const o = { ...DEFAULT_NOTE_OPTIONS, ...(noteOptions || {}) };
+  const out = { detail: o.detail, study_aids: !!o.study_aids, include_transcript: !!o.include_transcript };
+  if (o.max_frames !== null && o.max_frames !== "" && o.max_frames !== undefined) out.max_frames = Number(o.max_frames);
+  if (o.language) out.language = o.language;
+  return out;
+}
+
+export async function clearFinished(terminal) {
+  const jobs = await getJobs();
+  const gone = jobs.filter((j) => terminal.has(j.status)).map((j) => j.key);
+  if (!gone.length) return 0;
+  const { jobIndex } = await chrome.storage.local.get("jobIndex");
+  await chrome.storage.local.set({ jobIndex: (jobIndex || []).filter((k) => !gone.includes(k)) });
+  await chrome.storage.local.remove(gone.map(jobKey));
+  return gone.length;
 }
 
 export async function removeJob(key) {

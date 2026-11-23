@@ -1,3 +1,3 @@
-from .limiter import Limiter, bucket_specs
+from .limiter import ConcurrencyGate, Limiter, bucket_specs
 
-__all__ = ["Limiter", "bucket_specs"]
+__all__ = ["ConcurrencyGate", "Limiter", "bucket_specs"]

@@ -49,6 +49,11 @@ class Heartbeat:
         self.status.update(state="busy", job_id=job_id, stage=stage, stage_started_at=time.time())
         await self.publish()
 
+    async def note(self, **fields: Any) -> None:
+        """Update a few fields (e.g. state="waiting_llm") and publish now."""
+        self.status.update(fields)
+        await self.publish()
+
     async def idle(self, error: str | None = None) -> None:
         self.status["handled"] += 1
         if error:

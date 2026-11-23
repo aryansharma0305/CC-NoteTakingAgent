@@ -186,12 +186,13 @@
 
     const ws = o.workers || [];
     $("workers").innerHTML = ws.length ? ws.map((w) => {
-      const busy = w.state === "busy";
+      const busy = w.state === "busy" || w.state === "waiting_llm";
       const stale = o.now - (w.last_seen || 0) > 15;
       return `<div class="worker ${busy ? "isbusy" : ""}">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
           <strong class="mono">${esc(w.worker_id)}</strong>
-          ${pill(stale ? "stale" : busy ? "busy" : "idle", stale ? "warn" : busy ? "busy" : "ok")}
+          ${pill(stale ? "stale" : w.state === "waiting_llm" ? "waiting for LLM" : busy ? "busy" : "idle",
+                 stale || w.state === "waiting_llm" ? "warn" : busy ? "busy" : "ok")}
         </div>
         <div class="kv small" style="margin-top:8px">
           <div>LLM</div><div class="mono">${esc(w.llm)}</div>
@@ -209,7 +210,9 @@
     const q = o.queues || {};
     $("queues").innerHTML = q.error ? `<span class="err">${esc(q.error)}</span>` :
       `<table>${Object.entries(q).map(([k, v]) =>
-        `<tr><td class="mono">${esc(k)}</td><td style="text-align:right">${v < 0 ? "—" : v}</td></tr>`).join("")}</table>`;
+        `<tr><td class="mono">${esc(k)}</td><td style="text-align:right">${v < 0 ? "—" : v}</td></tr>`).join("")}</table>` +
+      (o.llm_gate && !o.llm_gate.error ? `<div class="small" style="margin-top:8px">LLM slots: <strong>${o.llm_gate.in_flight}</strong>
+        in use${o.llm_gate.limit > 0 ? ` of ${o.llm_gate.limit}` : " (no limit)"} · <strong>${o.llm_gate.waiting}</strong> waiting</div>` : "");
     $("counts").innerHTML = Object.keys(o.status_counts || {}).length
       ? Object.entries(o.status_counts).map(([k, v]) => pill(`${k}: ${v}`, statusClass(k))).join(" ")
       : `<span class="muted">No jobs yet.</span>`;
@@ -311,7 +314,7 @@
         return `<tr><td class="ts">${esc(new Date(t).toLocaleTimeString())}<div class="muted">+${dur((t - p) / 1000)}</div></td>
           <td>${esc(e.from || "∅")} → <strong>${esc(e.to || "")}</strong></td>
           <td class="mono">${esc(e.worker_id || "")}</td>
-          <td>${e.detail ? `<pre style="max-height:160px">${esc(JSON.stringify(e.detail, null, 1))}</pre>` : ""}</td></tr>`;
+          <td>${e.detail?.recovered_from ? `<div>${pill("recovered from " + String(e.detail.recovered_from).slice(0, 12), "warn")}</div>` : ""}${e.detail ? `<pre style="max-height:160px">${esc(JSON.stringify(e.detail, null, 1))}</pre>` : ""}</td></tr>`;
       }).join("")}</table>`;
   }
 

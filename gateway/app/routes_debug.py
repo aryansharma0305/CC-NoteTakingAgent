@@ -28,7 +28,8 @@ PAGE = Path(__file__).parent / "static" / "debug.html"
 # Non-secret settings worth seeing while debugging. Never add keys, tokens or secrets here.
 SAFE_SETTINGS = [
     "llm_provider", "llm_model", "llm_base_url", "llm_rpm", "llm_tpm", "llm_max_output_tokens",
-    "llm_timeout_sec", "max_duration_sec", "max_frames", "min_frames", "notes_words", "segment_window_sec",
+    "llm_timeout_sec", "llm_concurrency", "llm_num_ctx", "llm_temperature", "study_aids",
+    "notion_include_transcript", "max_duration_sec", "max_frames", "min_frames", "notes_words", "segment_window_sec",
     "chunk_tokens", "frame_parallelism", "frame_best_of", "frame_timeout_sec", "max_attempts", "retry_delays",
     "youtube_rps", "notion_rps", "notion_version", "fault_inject_429", "fault_inject_frame_fail", "log_level",
 ]
@@ -81,8 +82,13 @@ async def overview(limit: int = 30, st: AppState = Depends(get_state)):
         return [{**job_view(r, s.max_attempts), "worker_id": r.worker_id, "publish_state": r.publish_state}
                 for r in rows]
 
-    workers, queue_depths, status_counts, recent_jobs, pg, mq, rd, s3 = await asyncio.gather(
-        safe(_workers(st), []), safe(queues(), None), safe(counts(), {}), safe(recent(), []),
+    async def llm_gate():
+        held = await st.redis.zcard("sem:llm:holders")
+        waiting = await st.redis.zcard("sem:llm:queue")
+        return {"limit": s.llm_concurrency, "in_flight": int(held), "waiting": int(waiting)}
+
+    workers, queue_depths, status_counts, recent_jobs, gate, pg, mq, rd, s3 = await asyncio.gather(
+        safe(_workers(st), []), safe(queues(), None), safe(counts(), {}), safe(recent(), []), safe(llm_gate(), None),
         _check(_pg(st)), _check(st.publisher.ping()), _check(st.redis.ping()), _check(_s3(st)),
     )
     return {
@@ -91,6 +97,7 @@ async def overview(limit: int = 30, st: AppState = Depends(get_state)):
         "workers": workers,
         "queues": queue_depths,
         "status_counts": status_counts,
+        "llm_gate": gate,
         "jobs": recent_jobs,
         "settings": {k: getattr(s, k, None) for k in SAFE_SETTINGS},
     }

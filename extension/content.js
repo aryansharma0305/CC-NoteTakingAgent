@@ -24,18 +24,41 @@
     return t.replace(/\s*-\s*YouTube\s*$/, "").trim();
   }
 
+  const ICONS = {
+    info: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>',
+    success: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.5 14.5-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4-7 7z"/>',
+    error: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>',
+  };
+
   function toast(message, tone = "info") {
     let el = document.getElementById(TOAST_ID);
     if (!el) {
       el = document.createElement("div");
       el.id = TOAST_ID;
       el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
       document.body.appendChild(el);
     }
-    el.className = `vn-toast vn-toast--${tone} vn-toast--show`;
-    el.textContent = message;
+    const t = ICONS[tone] ? tone : "info";
+    el.className = `vn-toast vn-toast--${t} vn-toast--show`;
+    el.innerHTML =
+      `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><g fill="currentColor">${ICONS[t]}</g></svg>` +
+      '<div class="vn-toast__body"><div class="vn-toast__title">Video Notes</div><div class="vn-toast__msg"></div></div>';
+    el.querySelector(".vn-toast__msg").textContent = message;
     clearTimeout(el._t);
-    el._t = setTimeout(() => el.classList.remove("vn-toast--show"), 4500);
+    el._t = setTimeout(() => el.classList.remove("vn-toast--show"), 5000);
+  }
+
+  function flashButton(btn, ok) {
+    const label = btn.querySelector("span");
+    if (!label) return;
+    btn.classList.toggle("vn-btn--done", !!ok);
+    label.textContent = ok ? "Queued ✓" : "Take Notes";
+    clearTimeout(btn._t);
+    btn._t = setTimeout(() => {
+      label.textContent = "Take Notes";
+      btn.classList.remove("vn-btn--done");
+    }, 3000);
   }
 
   function onClick(ev) {
@@ -58,7 +81,8 @@
             toast("The extension didn't answer. Reload this page and try again.", "error");
             return;
           }
-          toast(resp.message, resp.tone || (resp.ok ? "info" : "error"));
+          toast(resp.message, resp.tone || (resp.ok ? "success" : "error"));
+          if (resp.ok && !resp.duplicate) flashButton(btn, true);
         }
       );
     } catch {
@@ -71,7 +95,7 @@
     b.id = id;
     b.type = "button";
     b.className = extraClass;
-    b.title = "Take notes on this video (Video Notes Agent)";
+    b.title = "Take notes on this video (Alt+Shift+N)";
     b.setAttribute("aria-label", "Take Notes");
     b.innerHTML =
       '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">' +
@@ -112,6 +136,15 @@
       inject();
     });
   }
+
+  // Toasts for submissions started elsewhere (keyboard shortcut, right-click menu).
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === "VN_TOAST") {
+      toast(msg.message, msg.tone || "info");
+      const btn = document.getElementById(BTN_ID);
+      if (btn && msg.tone === "success") flashButton(btn, true);
+    }
+  });
 
   window.addEventListener("yt-navigate-finish", scheduleInject);
   window.addEventListener("yt-page-data-updated", scheduleInject);

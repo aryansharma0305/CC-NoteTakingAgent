@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import insert, select
 
 from vidnotes_common.errors import ErrorCode
-from vidnotes_common.messages import StageMessage
+from vidnotes_common.messages import JobOptions, StageMessage
 from vidnotes_common.models import job_events, jobs
 from vidnotes_common.status import TERMINAL, JobStatus, Stage
 from vidnotes_common.youtube import parse_video_id
@@ -28,6 +28,8 @@ class SubmitJob(BaseModel):
     youtube_url: str
     notion_token: str | None = None
     notion_parent_id: str | None = None
+    # Optional per-job preferences (detail level, frame count, study aids, transcript, language).
+    options: JobOptions | None = None
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -106,6 +108,7 @@ async def submit_job(body: SubmitJob, st: AppState = Depends(get_state)):
         stage=Stage.TRANSCRIBE,
         enc_notion_token=st.cipher.encrypt(token),
         notion_parent_id=(body.notion_parent_id or "").strip() or None,
+        options=body.options or JobOptions(),
     )
     canonical_url = f"https://www.youtube.com/watch?v={video_id}"
     # Insert and publish in one transaction: if the broker is down the row rolls back.
@@ -129,7 +132,8 @@ async def submit_job(body: SubmitJob, st: AppState = Depends(get_state)):
             await conn.execute(
                 insert(job_events).values(
                     job_id=job_id, from_status=None, to_status=JobStatus.QUEUED.value,
-                    detail={"event": "submitted", "metadata_source": meta.source if meta else None},
+                    detail={"event": "submitted", "metadata_source": meta.source if meta else None,
+                            "options": msg.options.model_dump(exclude_none=True)},
                     worker_id="gateway",
                 )
             )

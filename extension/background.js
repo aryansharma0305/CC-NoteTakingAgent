@@ -1,12 +1,25 @@
-// Background service worker: owns Notion OAuth, job submission and background
-// polling (badge + completion notification). The popup polls on its own while open.
+// Background service worker: owns Notion OAuth, job submission (from the player
+// button, the popup, the right-click menu and the keyboard shortcut) and
+// background polling (badge + completion notification). The popup polls on its
+// own while open.
 
 import * as api from "./lib/api.js";
 import { TERMINAL, describeJob } from "./lib/status-text.js";
-import { addJob, clearAuth, getAuth, getJobs, getSettings, setAuth, updateJob } from "./lib/storage.js";
+import {
+  addJob,
+  clearAuth,
+  getAuth,
+  getJobs,
+  getSettings,
+  jobOptionsPayload,
+  setAuth,
+  updateJob,
+} from "./lib/storage.js";
+import { videoIdFromUrl } from "./lib/youtube.js";
 
 const POLL_ALARM = "vn-poll";
-
+const MENU_LINK = "vn-notes-link";
+const MENU_PAGE = "vn-notes-page";
 // ---------------------------------------------------------------- OAuth ----
 
 async function connectNotion() {
@@ -56,22 +69,34 @@ async function connectNotion() {
 
 // ---------------------------------------------------------------- jobs -----
 
-async function submitJob({ videoId, url, title }) {
+async function submitJob({ videoId, url, title, options, force }) {
+  videoId = videoId || videoIdFromUrl(url || "");
+  if (!videoId) return { ok: false, tone: "error", message: "That isn't a YouTube video link." };
   const auth = await getAuth();
   if (!auth) {
     await chrome.action.setBadgeBackgroundColor({ color: "#d93025" });
     await chrome.action.setBadgeText({ text: "!" });
     return { ok: false, tone: "error", message: "Connect Notion first: click the Video Notes icon in the toolbar." };
   }
+  // Double-click guard: one active job per video (the popup can force a re-run).
+  if (!force) {
+    const running = (await getJobs()).find((j) => j.video_id === videoId && j.job_id && !TERMINAL.has(j.status));
+    if (running) {
+      return { ok: true, tone: "info", duplicate: true,
+               message: "Notes for this video are already in progress — open the extension to watch." };
+    }
+  }
   const settings = await getSettings();
   const parentId = settings.parentId || auth.templateId || undefined;
+  const optionsPayload = jobOptionsPayload({ ...settings.noteOptions, ...(options || {}) });
   const res = await api.submitJob(settings.gatewayUrl, {
-    youtube_url: url || `https://www.youtube.com/watch?v=${videoId}`,
+    youtube_url: `https://www.youtube.com/watch?v=${videoId}`,
     notion_token: auth.accessToken,
     notion_parent_id: parentId,
+    options: optionsPayload,
   });
 
-  const base = { video_id: videoId, title: title || "YouTube video", submittedAt: Date.now() };
+  const base = { video_id: videoId, title: title || "YouTube video", submittedAt: Date.now(), options: optionsPayload };
   if (res.status === 202 && res.data) {
     const job = {
       ...base,
@@ -85,7 +110,7 @@ async function submitJob({ videoId, url, title }) {
     await addJob(job);
     await ensurePolling();
     await refreshBadge();
-    return { ok: true, tone: "info", message: "Queued — open the extension to track progress." };
+    return { ok: true, tone: "success", message: "Queued! Open the Video Notes icon to track progress." };
   }
   const error = res.network
     ? { code: "SERVER_UNREACHABLE" }
@@ -94,6 +119,12 @@ async function submitJob({ videoId, url, title }) {
   const job = { ...base, key: `local-${Date.now()}`, job_id: null, status: "REJECTED", error };
   await addJob(job);
   return { ok: false, tone: "error", message: describeJob(job).detail };
+}
+
+async function retryJob(key) {
+  const job = (await getJobs()).find((j) => j.key === key);
+  if (!job) return { ok: false, message: "That job is gone." };
+  return submitJob({ videoId: job.video_id, title: job.title, options: job.options, force: true });
 }
 
 async function pollActiveJobs() {
@@ -121,7 +152,7 @@ function notifyFinished(job) {
     type: "basic",
     iconUrl: "icons/icon128.png",
     title: `${d.headline}: ${job.title || "Video notes"}`,
-    message: d.detail,
+    message: d.detail + (job.result && job.result.notion_page_url ? " — click to open in Notion." : ""),
     priority: 0,
   });
 }
@@ -129,7 +160,7 @@ function notifyFinished(job) {
 async function refreshBadge() {
   const jobs = await getJobs();
   const active = jobs.filter((j) => j.job_id && !TERMINAL.has(j.status)).length;
-  await chrome.action.setBadgeBackgroundColor({ color: "#3b5bdb" });
+  await chrome.action.setBadgeBackgroundColor({ color: "#6d5efc" });
   await chrome.action.setBadgeText({ text: active ? String(active) : "" });
 }
 
@@ -139,6 +170,26 @@ async function ensurePolling() {
   if (!existing) await chrome.alarms.create(POLL_ALARM, { periodInMinutes: 0.5, delayInMinutes: 0.5 });
 }
 
+// Tell the YouTube tab (if any) to show a toast; ignore tabs without our content script.
+function toastInTab(tabId, resp) {
+  if (!tabId || !resp) return;
+  chrome.tabs.sendMessage(tabId, { type: "VN_TOAST", message: resp.message, tone: resp.tone }).catch(() => {});
+}
+
+async function submitFromTab(tab, url) {
+  const videoId = videoIdFromUrl(url || (tab && tab.url) || "");
+  if (!videoId) {
+    const resp = { ok: false, tone: "error", message: "Open a YouTube video first (or right-click a video link)." };
+    toastInTab(tab && tab.id, resp);
+    return resp;
+  }
+  const sameVideo = tab && videoIdFromUrl(tab.url || "") === videoId;
+  const title = sameVideo ? (tab.title || "").replace(/\s*-\s*YouTube\s*$/, "") : undefined;
+  const resp = await submitJob({ videoId, title });
+  toastInTab(tab && tab.id, resp);
+  return resp;
+}
+
 // ------------------------------------------------------------- wiring ------
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -146,6 +197,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     switch (msg && msg.type) {
       case "SUBMIT_JOB":
         return submitJob(msg);
+      case "RETRY_JOB":
+        return retryJob(msg.key);
       case "CONNECT_NOTION":
         return { ok: true, ...(await connectNotion()) };
       case "SAVE_INTERNAL_TOKEN": {
@@ -185,12 +238,37 @@ chrome.notifications.onClicked.addListener(async (id) => {
   chrome.notifications.clear(id);
 });
 
+// Right-click a YouTube link (e.g. in search results or a playlist) -> notes for that video.
+function createMenus() {
+  chrome.contextMenus.removeAll(() => {
+    const patterns = ["https://www.youtube.com/*", "https://youtube.com/*", "https://m.youtube.com/*",
+                      "https://youtu.be/*"];
+    chrome.contextMenus.create({ id: MENU_LINK, title: "Take notes on this video", contexts: ["link"],
+                                 targetUrlPatterns: patterns });
+    chrome.contextMenus.create({ id: MENU_PAGE, title: "Take notes on this video", contexts: ["page", "video"],
+                                 documentUrlPatterns: ["https://www.youtube.com/watch*", "https://www.youtube.com/shorts/*"] });
+  });
+}
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === MENU_LINK) submitFromTab(tab, info.linkUrl);
+  else if (info.menuItemId === MENU_PAGE) submitFromTab(tab, info.pageUrl);
+});
+
+// Keyboard shortcut (default Alt+Shift+N; change at chrome://extensions/shortcuts).
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== "take-notes") return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  submitFromTab(tab);
+});
+
 chrome.runtime.onStartup.addListener(() => {
   ensurePolling();
   refreshBadge();
 });
 
 chrome.runtime.onInstalled.addListener(async (details) => {
+  createMenus();
   if (details.reason === "install") {
     chrome.runtime.openOptionsPage();
   }

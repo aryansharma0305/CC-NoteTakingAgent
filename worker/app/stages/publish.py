@@ -41,6 +41,17 @@ async def run(ctx: WorkerContext, job, msg) -> StageResult:
             warnings.append({"code": f.get("error") or ErrorCode.FRAME_EXTRACTION_FAILED,
                              "timestamp_sec": f.get("timestamp_sec")})
 
+    opts = getattr(msg, "options", None)
+    include_transcript = s.notion_include_transcript
+    if opts is not None and opts.include_transcript is not None:
+        include_transcript = opts.include_transcript
+    transcript = None
+    if include_transcript:
+        art = await repo.get_artifact(ctx.engine, job.id, "transcript") or {}
+        transcript = art.get("segments") or None
+    created = getattr(job, "created_at", None)
+    generated_on = created.strftime("%d %b %Y") if created else None
+
     token = ctx.cipher.decrypt(msg.enc_notion_token)
     fp = token_fingerprint(token)
     parent_id = msg.notion_parent_id or s.default_notion_parent_id or None
@@ -66,6 +77,10 @@ async def run(ctx: WorkerContext, job, msg) -> StageResult:
         notion_version=s.notion_version,
         acquire=lambda: ctx.limiter.acquire("notion", 1, key_suffix=fp),
         fault_429_rate=s.fault_429_rates().get("notion", 0.0),
+        transcript=transcript,
+        model=(synthesis.get("model") or "").split(":", 1)[-1] or None,
+        generated_on=generated_on,
+        api_url=s.notion_api_url,
     )
     warnings.extend(result.warnings)
     if frames_art.get("stream_error"):

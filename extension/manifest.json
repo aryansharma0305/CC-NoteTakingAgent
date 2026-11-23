@@ -2,25 +2,40 @@
   "manifest_version": 3,
   "name": "Video Notes Agent",
   "short_name": "Video Notes",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Turn a YouTube video into study notes with real frames, published to Notion.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5phvw/RBg8AW9lnXwsyTm36Kn+8RjpZ610d+h/AvCR+jFujGkxUtmxQFp8XgVBv4j1f43KPuBLvmfltFyhjVhT48QdflYYVG4rkF/B68Yf9luZ2Ld/Xvqj4XipCNRr8INaG24NuEVEMX2FvN3AqwzNcmk7OJWKpSJIthcZnTkyl5wKff9DDy3MwFB+aep/jKRQuQrpuTUfzX3eyU+Bqt5DIAS753AdHqmnOZ7f2740k5+y6HUtyvYyap8UzIo/oFWZfKuVp3coTXbjdiJHq9O0wrBFdixMyX2v3EFdQ6Xwb9I3fR4zcovtNjd66NBc5twvs34zOQz0If5UVDyVjL/wIDAQAB",
-  "permissions": ["storage", "identity", "alarms", "notifications"],
+  "permissions": [
+    "storage",
+    "identity",
+    "alarms",
+    "notifications",
+    "contextMenus"
+  ],
   "host_permissions": [
     "https://www.youtube.com/*",
     "http://localhost:8000/*",
     "http://127.0.0.1:8000/*"
   ],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/*"],
-      "js": ["content.js"],
-      "css": ["content.css"],
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle"
     }
   ],
@@ -43,5 +58,14 @@
   "options_ui": {
     "page": "options/options.html",
     "open_in_tab": true
+  },
+  "commands": {
+    "take-notes": {
+      "suggested_key": {
+        "default": "Alt+Shift+N",
+        "mac": "Alt+Shift+N"
+      },
+      "description": "Take notes on the YouTube video in the current tab"
+    }
   }
 }

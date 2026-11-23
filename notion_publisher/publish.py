@@ -170,9 +170,14 @@ async def publish(
     acquire: Callable[[], Awaitable[None]] | None = None,
     fault_429_rate: float = 0.0,
     client: NotionClient | None = None,
+    transcript: list[dict[str, Any]] | None = None,
+    model: str | None = None,
+    generated_on: str | None = None,
+    api_url: str | None = None,
 ) -> PublishResult:
     own = client is None
-    client = client or NotionClient(token, version=notion_version, acquire=acquire, fault_429_rate=fault_429_rate)
+    client = client or NotionClient(token, version=notion_version, acquire=acquire, fault_429_rate=fault_429_rate,
+                                    **({"base_url": api_url} if api_url else {}))
     try:
         warnings: list[dict[str, Any]] = []
         parent = await resolve_parent(client, parent_id)
@@ -183,6 +188,9 @@ async def publish(
             duration_sec=job.duration_sec,
             synthesis=synthesis,
             frames=frames,
+            transcript=transcript,
+            model=model,
+            generated_on=generated_on,
         )
         blocks = await _upload_frames(client, planned, warnings)
         published = sum(1 for b in blocks if b.get("type") == "image")

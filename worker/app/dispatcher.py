@@ -110,6 +110,13 @@ async def _handle_locked(ctx: WorkerContext, msg: StageMessage, headers: dict[st
     # ---- claim ------------------------------------------------------------
     claim_fields = dict(attempt=msg.attempt, waiting_until=None, retry_reason=None, dispatch_pending=False)
     detail = {"event": "claimed", "stage": str(msg.stage), "attempt": msg.attempt, "deferred": msg.deferred}
+    # x-delivery-count > 0: the broker redelivered this message because the worker that
+    # held it died (or nacked). Record it so the timeline shows the recovery explicitly.
+    deliveries = int((headers or {}).get("x-delivery-count") or 0)
+    if deliveries:
+        detail["redelivered"] = deliveries
+        if job.worker_id and job.worker_id != ctx.worker_id and status == stage_status:
+            detail["recovered_from"] = job.worker_id
     async with ctx.engine.begin() as conn:
         if status == JobStatus.QUEUED:
             ok = await cas_transition(

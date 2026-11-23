@@ -75,6 +75,8 @@ export function stepIndex(status) {
 }
 
 function waitingText(job, now) {
+  // Queued for the (local) AI model: a reason but no retry timer.
+  if (!job.waiting_until && job.retry_reason && !TERMINAL.has(job.status)) return job.retry_reason;
   if (!job.waiting_until) return null;
   const left = Math.ceil((Date.parse(job.waiting_until) - now) / 1000);
   if (Number.isNaN(left) || left < -5) return null;
@@ -132,6 +134,19 @@ export function describeJob(job, now = Date.now()) {
       };
     }
   }
+}
+
+export function elapsedText(job, now = Date.now()) {
+  // Server timestamps when known (consistent with updated_at), else the local submit time.
+  const start = (job.created_at && Date.parse(job.created_at)) || job.submittedAt;
+  if (!start) return "";
+  const end = TERMINAL.has(job.status) && job.updated_at ? Date.parse(job.updated_at) : now;
+  const s = Math.max(0, Math.round((end - start) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+export function canRetry(job) {
+  return ["FAILED", "DEAD_LETTERED", "REJECTED"].includes(job.status) && !!job.video_id;
 }
 
 export function needsReconnect(job) {

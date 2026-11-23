@@ -20,6 +20,8 @@ about and the contracts both halves depend on.
    before the next message was confirmed, so re-publish it.
 3. Claim: `QUEUED → TRANSCRIBING` by compare-and-set, or record the claim on the current stage.
    Clears `waiting_until`, records `worker_id` (the container hostname, used by the crash script).
+   A redelivered message (`x-delivery-count > 0`) adds `redelivered` and `recovered_from: <old worker>`
+   to the `claimed` event, so `/debug` shows the recovery explicitly.
 4. If the stage's artifact already exists, skip the work. Otherwise run the stage.
 5. Success: one transaction upserts the artifact and moves the job to the next stage's status with
    `dispatch_pending = true`; publish the next message with publisher confirms; clear the flag; ack.
@@ -27,6 +29,24 @@ about and the contracts both halves depend on.
    `waiting_until`/`retry_reason`, ack. Budget spent → publish to `vn.dlx`, mark `DEAD_LETTERED`, ack.
 7. `FatalError`: mark `FAILED` with `{code, message, stage}`, ack.
 8. Infrastructure failure (DB or broker down): `nack(requeue=True)`; the quorum delivery limit bounds it.
+
+## Summarize stage (worker/app/stages/summarize.py)
+
+1. Split the transcript into chunks of `CHUNK_TOKENS` with ~60 s overlap.
+2. Per chunk: build the prompts (targets scaled by the job's `options`), look for a `synth_part_<i>`
+   artifact whose `key` (hash of model + system + user prompt) matches → reuse; else call the model
+   (one repair retry on invalid JSON) and checkpoint the parsed result immediately.
+3. `clean_partial`: tidy text, snap section starts and frame times to transcript lines inside the chunk.
+4. `merge_partials`: ordered concat, fold overlap duplicates (same or similar heading at a chunk
+   boundary), attach frames to sections by time, dedupe/cap frames to `max_frames`.
+5. Study aids (if enabled): one more call over the merged notes → title, summary, key takeaways,
+   glossary, review questions; checkpointed as `synth_overview`. Unreadable output is skipped (the page
+   publishes without them); an unreachable model retries the stage, which then reuses the checkpoints.
+
+Every LLM call first takes the RPM/TPM tokens, then (if `LLM_CONCURRENCY > 0`) a slot in the global
+LLM semaphore (`worker/app/ratelimit/semaphore.lua`): FIFO tickets, 15 s leases renewed every 5 s,
+stale waiters dropped after 10 s. While queued the job shows `retry_reason = "Waiting for the AI
+model (n calls ahead…)"` with no `waiting_until`, which the popup renders as "Waiting".
 
 ## Broker topology
 
@@ -44,7 +64,8 @@ code, named by delay, so changing `RETRY_DELAYS` never conflicts with an existin
 ## Data model
 
 `jobs` is the only table the API reads. `job_artifacts(job_id, stage)` holds `transcript`,
-`synthesis` and `frames` outputs (upserts). `job_events` is the audit trail: `submitted`, `claimed`,
+`synthesis` and `frames` outputs (upserts), plus the summarize checkpoints `synth_part_<i>` and
+`synth_overview`. Per-job `options` travel in every stage message (not in the table). `job_events` is the audit trail: `submitted`, `claimed`,
 `stage_done`, `retry_scheduled`, `dead_lettered`, `failed`, `requeued_from_dlq`. Recovery time after a
 crash is the gap between the kill and the next `claimed` event by a different worker.
 

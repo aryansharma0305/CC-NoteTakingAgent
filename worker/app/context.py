@@ -13,7 +13,7 @@ from vidnotes_common.crypto import TokenCipher
 
 from .heartbeat import Heartbeat
 from .llm import LLMClient
-from .ratelimit import Limiter
+from .ratelimit import ConcurrencyGate, Limiter
 from .storage import Storage
 
 
@@ -30,3 +30,4 @@ class WorkerContext:
     cipher: TokenCipher
     worker_id: str = socket.gethostname()
     heartbeat: Heartbeat | None = None  # live status for the /debug panel
+    llm_gate: ConcurrencyGate | None = None  # LLM_CONCURRENCY across all workers

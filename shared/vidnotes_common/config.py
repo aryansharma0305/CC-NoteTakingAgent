@@ -34,9 +34,14 @@ class Settings(BaseSettings):
     notion_version: str = "2022-06-28"
     notion_rps: float = 2.5
     default_notion_parent_id: str = ""
+    # Override only for tests / a local mock of the Notion API.
+    notion_api_url: str = "https://api.notion.com/v1"
+    # Default page sections (each can be overridden per job by the extension).
+    notion_include_transcript: bool = True
+    study_aids: bool = True
 
     # --- LLM ---
-    llm_provider: str = "anthropic"  # anthropic | openai | gemini | fake
+    llm_provider: str = "anthropic"  # anthropic | openai | ollama | gemini | fake
     llm_api_key: str = ""
     llm_model: str = "claude-haiku-5-5"
     llm_base_url: str = ""  # optional override for OpenAI-compatible endpoints
@@ -44,6 +49,13 @@ class Settings(BaseSettings):
     llm_tpm: int = 200_000
     llm_max_output_tokens: int = 16000
     llm_timeout_sec: float = 120.0
+    llm_temperature: float = 0.2
+    # Max LLM calls in flight across ALL workers (0 = unlimited). Set to 1-2 for a
+    # local model so workers queue for it instead of timing out inside Ollama.
+    llm_concurrency: int = 0
+    # Ollama only: context window per request. Must hold system prompt + chunk + output.
+    llm_num_ctx: int = 8192
+    llm_keep_alive: str = "30m"
 
     # --- rate limiting ---
     youtube_rps: float = 2.0

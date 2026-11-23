@@ -12,6 +12,7 @@ import asyncio
 import math
 import random
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,3 +72,94 @@ class Limiter:
                 raise RateLimited(spec.service, retry_after=wait,
                                   message=f"Waiting for {spec.service} capacity (global rate limit)")
             await asyncio.sleep(wait)
+
+
+SEM_LUA = (Path(__file__).parent / "semaphore.lua").read_text()
+LEASE_MS = 15_000  # a SIGKILLed holder's slot frees itself within this (refreshed every 5 s)
+WAITER_TTL_MS = 10_000
+POLL_SEC = 1.0
+
+
+class ConcurrencyGate:
+    """Global cap on in-flight calls to one service (LLM_CONCURRENCY), fair (FIFO)
+    across workers and safe against crashes: the holder refreshes its lease in the
+    background, so a killed worker's slot expires within LEASE_MS.
+
+        async with gate.slot(on_wait=...):
+            await llm.complete_json(...)
+    """
+
+    def __init__(self, redis, name: str, limit: int, max_wait_sec: float):
+        self._redis = redis
+        self._script = redis.register_script(SEM_LUA)
+        self._keys = [f"sem:{name}:holders", f"sem:{name}:queue", f"sem:{name}:seen", f"sem:{name}:ticket"]
+        self.name = name
+        self.limit = limit
+        self.max_wait = max_wait_sec
+
+    async def _call(self, op: str, member: str) -> tuple[bool, int, int]:
+        granted, pos, held = await self._script(
+            keys=self._keys, args=[op, member, self.limit, LEASE_MS, WAITER_TTL_MS]
+        )
+        return bool(int(granted)), int(pos), int(held)
+
+    async def status(self) -> dict[str, int]:
+        held = await self._redis.zcard(self._keys[0])
+        waiting = await self._redis.zcard(self._keys[1])
+        return {"limit": self.limit, "in_flight": int(held), "waiting": int(waiting)}
+
+    def slot(self, on_wait=None):
+        return _Slot(self, on_wait)
+
+
+class _Slot:
+    def __init__(self, gate: ConcurrencyGate, on_wait):
+        self.gate = gate
+        self.on_wait = on_wait  # async callback(position) while queued (called on changes)
+        self.member = f"{uuid.uuid4().hex}"
+        self._refresher: asyncio.Task | None = None
+        self.waited_sec = 0.0
+
+    async def __aenter__(self):
+        g = self.gate
+        if g.limit <= 0:
+            return self
+        start = time.monotonic()
+        last_pos = None
+        while True:
+            granted, pos, _ = await g._call("acquire", self.member)
+            if granted:
+                break
+            if pos != last_pos and self.on_wait is not None:
+                last_pos = pos
+                try:
+                    await self.on_wait(pos)
+                except Exception:  # noqa: BLE001 - status updates must never block the call
+                    pass
+            if time.monotonic() - start > g.max_wait:
+                await g._call("release", self.member)
+                raise RateLimited(g.name, retry_after=None,
+                                  message=f"Waiting for the {g.name.upper()} (busy with other jobs)")
+            await asyncio.sleep(POLL_SEC * (0.8 + random.random() * 0.4))
+        self.waited_sec = time.monotonic() - start
+        self._refresher = asyncio.create_task(self._refresh())
+        return self
+
+    async def _refresh(self):
+        while True:
+            await asyncio.sleep(LEASE_MS / 3000)
+            try:
+                await self.gate._call("refresh", self.member)
+            except Exception:  # noqa: BLE001 - next refresh retries
+                pass
+
+    async def __aexit__(self, *exc):
+        if self.gate.limit <= 0:
+            return False
+        if self._refresher:
+            self._refresher.cancel()
+        try:
+            await self.gate._call("release", self.member)
+        except Exception:  # noqa: BLE001 - the lease expires on its own
+            pass
+        return False

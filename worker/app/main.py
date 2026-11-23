@@ -20,7 +20,7 @@ from .consumer import consume
 from .context import WorkerContext
 from .heartbeat import Heartbeat
 from .llm import make_llm
-from .ratelimit import Limiter
+from .ratelimit import ConcurrencyGate, Limiter
 from .storage import Storage
 
 log = get_logger("worker")
@@ -61,7 +61,10 @@ async def main() -> None:
         heartbeat=Heartbeat(redis, worker_id, {
             "llm": f"{s.llm_provider}:{s.llm_model}",
             "llm_base_url": s.llm_base_url or None,
+            "llm_concurrency": s.llm_concurrency,
         }),
+        # Wait long enough for at least two full calls ahead of us before parking the job.
+        llm_gate=ConcurrencyGate(redis, "llm", s.llm_concurrency, max_wait_sec=s.llm_timeout_sec * 2 + 60),
     )
     hb_task = asyncio.create_task(ctx.heartbeat.run())
     log.info("worker_started", worker_id=worker_id, llm=f"{s.llm_provider}:{s.llm_model}",

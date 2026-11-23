@@ -21,6 +21,8 @@ class FakeLLM(LLMClient):
 
     async def complete_json(self, system: str, user: str, schema: dict[str, Any], max_tokens: int) -> str:
         self.maybe_inject_429()
+        if "key_takeaways" in schema.get("properties", {}):
+            return self._overview(user)
         lines: list[tuple[int, str]] = []
         title = "Video notes"
         for raw in user.splitlines():
@@ -50,3 +52,22 @@ class FakeLLM(LLMClient):
                                 "reason": "Representative frame for this part of the video.", "section_index": si})
         tldr = " ".join(text for _, text in lines[:3])[:400]
         return json.dumps({"title": title, "tldr": tldr, "sections": sections, "visual_moments": moments})
+
+    @staticmethod
+    def _overview(user: str) -> str:
+        title = "Video notes"
+        bullets: list[str] = []
+        for raw in user.splitlines():
+            if raw.startswith("Video title:"):
+                title = raw.split(":", 1)[1].strip() or title
+            elif raw.startswith("- "):
+                bullets.append(raw[2:].strip())
+        heads = [ln[3:].split(" [")[0] for ln in user.splitlines() if ln.startswith("## ")]
+        return json.dumps({
+            "title": title,
+            "summary": " ".join(bullets[:2])[:400],
+            "key_takeaways": bullets[:4],
+            "glossary": [{"term": h, "definition": f"Topic covered in the section '{h}'."} for h in heads[:3]],
+            "review_questions": [{"question": f"What does the video say about {h}?",
+                                  "answer": (bullets[i] if i < len(bullets) else h)} for i, h in enumerate(heads[:3])],
+        })

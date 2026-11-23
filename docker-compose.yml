@@ -18,6 +18,8 @@ x-app-env: &app-env
     MAX_ATTEMPTS: ${MAX_ATTEMPTS:-5}
     FAULT_INJECT_429: ${FAULT_INJECT_429:-}
     FAULT_INJECT_FRAME_FAIL: ${FAULT_INJECT_FRAME_FAIL:-}
+    # Point at ops/mock_notion.py for offline runs: http://host.docker.internal:8765/v1
+    NOTION_API_URL: ${NOTION_API_URL:-https://api.notion.com/v1}
 
 services:
   rabbitmq:
